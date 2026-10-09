@@ -1,3 +1,18 @@
+> ## ⚠️ 这是修改版（Unofficial modified fork）
+>
+> 本仓库是「卫戍协议：盟约」非官方同人复刻项目的**个人修改版**，基于
+> [LongQianChen/Stronghold-Protocol](https://github.com/LongQianChen/Stronghold-Protocol) 的
+> `feat/IncreasePlayerCapacity` 分支，上游原始项目为
+> [sganggs/Stronghold-Protocol](https://github.com/sganggs/Stronghold-Protocol)。
+>
+> - 代码许可：**GPL-3.0-or-later**（见 [LICENSE](LICENSE)）
+> - 游戏素材版权属**上海鹰角网络 / Yostar**，**仅限非商业同人使用**（见 [NOTICE.md](NOTICE.md)）；本仓库不包含素材
+> - **非官方**作品，与鹰角网络 / Yostar 无关联，禁止商业使用
+> - 相对上游的改动清单：[MODIFICATIONS.md](MODIFICATIONS.md)
+>
+> ---
+
+（以下为原项目 README）
 # 卫戍协议：盟约 · Stronghold Protocol: Alliance
 
 《明日方舟》季节性自走棋塔防玩法「卫戍协议：盟约」的**非官方同人复刻**：浏览器即开即玩，单人或最多 20 人联机合作。
