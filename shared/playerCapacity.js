@@ -1,3 +1,5 @@
+// MODIFIED 2026-10-09: Unite wave limit scales with the opening player count (ceil(players/2)).
+// See MODIFICATIONS.md for the full list of changes to this fork.
 // Capacity rules shared by the server and browser. See docs/PLAYER_CAPACITY.md for the fork's rules.
 import { BASE_SEATS, MAX_SEATS, MAX_DRAFT_CARDS } from './constants.js';
 
