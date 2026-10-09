@@ -1,3 +1,4 @@
+// MODIFIED 2026-10-09: uniteRoundLimit() now takes the opening seat count. See MODIFICATIONS.md.
 // server/match/unite.js — 联防 (Unite) planning and LP attribution (DESIGN §6.1, research 06 §5, research 08 §5).
 //
 // Trigger (co-op only): after the normal combats, ≥ 1 alive player leaked (a counted leak ⇒ not perfect) and
