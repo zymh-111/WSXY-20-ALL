@@ -3,7 +3,7 @@ import { BASE_SEATS, MAX_SEATS, MAX_DRAFT_CARDS } from './constants.js';
 
 export const MIN_COOP_DRAFT_CARDS = MAX_DRAFT_CARDS;
 export const GROUPED_POOL_MIN_PLAYERS = 6;
-export const MAX_UNITE_ROUNDS = 5;
+export const MAX_UNITE_ROUNDS = Math.ceil(MAX_SEATS / 2);
 export const MAX_UNITE_HELPERS = MAX_UNITE_ROUNDS * 2;
 
 /** Each fixed co-op group has its own six-card page, independent of room or living-player count. */
@@ -39,8 +39,8 @@ export function poolGroupSizes(players) {
 export const poolCopyScale = (groupSize) => Math.max(1, groupSize / BASE_SEATS);
 
 /** The opening pool-group count sets the Unite limit; later departures never lower it. */
-export const uniteRoundLimit = (poolGroupCount) => Number.isInteger(poolGroupCount)
-  ? Math.max(1, Math.min(MAX_UNITE_ROUNDS, poolGroupCount)) : 1;
+export const uniteRoundLimit = (playerCount) => Number.isInteger(playerCount) && playerCount > 0
+  ? Math.max(1, Math.min(MAX_UNITE_ROUNDS, Math.ceil(playerCount / 2))) : 1;
 
 /** Keep the original <=4 player unlock requirement; larger teams need proportionally more layers. */
 export const coopHiddenLayerThreshold = (baseline, players) => Math.ceil(baseline * Math.max(1, players / BASE_SEATS));
