@@ -11,26 +11,7 @@ import { uniteLeft } from '../../sim/spec.js';
 import { FLOW_TICKER_PRIORITY, DELAYS, OK, fail } from './common.js';
 import { msg } from '../../../shared/i18n.js';
 
-/** [CUSTOM] 联防时限：2 人兜怪 = 回合作战时限（基准）；每多 1 名兜怪者 x1.2，最多 UNITE_TIME_MAX_SECONDS 现实秒。 */
-const UNITE_TIME_FACTOR = 1.2;
-const UNITE_TIME_MAX_SECONDS = 300;
-
 export class MatchUnite {
-  /** [CUSTOM] 本回合参与联防的助手总数（已上场 + 本波 + 候补）。 */
-  uniteHelperCount(plan) {
-    const n = (arr) => (Array.isArray(arr) ? arr.length : 0);
-    return Math.max(1, n(plan && plan.usedHelpers) + n(plan && plan.helpers) + n(plan && plan.reserveHelpers));
-  }
-
-  /** [CUSTOM] 联防时限 = 本回合作战时限 x 1.2^(H-2)，最多 300 现实秒。 */
-  uniteTimeLimitOf(plan) {
-    const base = this.wave ? this.wave.timeLimit : 60;
-    const h = this.uniteHelperCount(plan);
-    const scale = Math.pow(UNITE_TIME_FACTOR, Math.max(0, h - 2));
-    const capGame = UNITE_TIME_MAX_SECONDS * (this.gameSpeed || 2);
-    const limit = Math.min(Math.round(base * scale), Math.round(capGame));
-    return { base, h, scale, limit };
-  }
   // Each wave has fresh ballots; approval ends all later waves after the current battle finishes.
   uniteSkipVoters() { return this.humans().filter((ps) => ps.connected && !ps.autoplay); }
 
@@ -70,7 +51,7 @@ export class MatchUnite {
     if (this.clientCombat) { this._startUniteClient(plan); return; }
     this.phase = PHASE.UNITE;
     this.unitePlan = plan;
-    const { limit } = this.uniteTimeLimitOf(plan);
+    const limit = this.wave ? this.wave.timeLimit : 60;
     const battle = this.newBattle(this._uniteOpts(plan, limit));
     this.fields = [{ fieldId: 'u', kind: 'unite', players: plan.helpers.map((p) => p.playerId), battle, live: true }];
     this.deadline = this.sched.instant ? 0 : this.sched.now() + Math.round((limit / this.gameSpeed) * 1000);
@@ -124,7 +105,7 @@ export class MatchUnite {
   _startUniteClient(plan) {
     this.phase = PHASE.UNITE;
     this.unitePlan = plan;
-    const { limit } = this.uniteTimeLimitOf(plan);
+    const limit = this.wave ? this.wave.timeLimit : 60;
     const f = this._ccField({ fieldId: 'u', kind: 'unite', players: plan.helpers.map((p) => p.playerId), opts: this._uniteOpts(plan, limit) });
     this.deadline = this.sched.instant ? 0 : this.sched.now() + Math.round((limit / this.gameSpeed) * 1000);
     this.watchers.clear();
