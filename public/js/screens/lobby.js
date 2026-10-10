@@ -16,11 +16,17 @@ import { DIFFICULTIES, DIFFICULTY_NAMES, DIFFICULTY_COLORS, ROOM_CODE_LEN, MAX_S
 import { html, Button, Icon, MicroLabel, Panel, TextField, PingPill, AvatarFrame, Tooltip, Spinner, DifficultyIcon, doctorNo } from '../ui/components.js';
 import { toast, toastError } from '../ui/toasts.js';
 import { GuideButton } from '../ui/guide.js';
+import { AnnouncementButton } from '../ui/announcements.js';
+import { AssetCacheButton } from '../ui/assetCache.js';
+import { openStats } from './stats.js';
+import { SettingsButton } from '../ui/settings.js';
 import { LoadoutButton } from './loadout.js';
 import { net, identity } from '../net.js';
 import { store, useStore, shallowEqual, loadPref, savePref } from '../store.js';
 import { getConfig, getMode, getStage, useData } from '../data.js';
 import { t, tc, N_ } from '../../../shared/i18n.js';
+import { createLobbyDiscovery } from '../lobbyDiscovery.js';
+import { LobbyOnlinePill, LobbyDiscoveryPanel, LobbyRoomList } from '../ui/lobbyDiscovery.js';
 
 /** Official mode texts (activity_table act2autochess.modeDataDict), fallback when config.json is absent. */
 export const MODE_TEXT = {
@@ -251,10 +257,22 @@ export function LobbyScreen() {
   });
   const [code, setCode] = useState('');
   const [busy, setBusy] = useState(null);
+  const discoveryRef = useRef(null);
+  if (!discoveryRef.current) discoveryRef.current = createLobbyDiscovery({ net });
+  const discovery = discoveryRef.current;
+  const discoveryState = useStore((s) => s, shallowEqual, discovery.target);
+  const [matchCapacity, setMatchCapacity] = useState(() => {
+    const saved = loadPref('lobby.matchCapacity', null);
+    return ROOM_CAPACITIES.includes(saved) ? saved : null;
+  });
   const [recent] = useState(recentRooms);
   const alive = useRef(true);
   const inFlight = useRef(false); // synchronous guard against double clicks (state updates are async)
   useEffect(() => () => { alive.current = false; }, []);
+  useEffect(() => {
+    discovery.start();
+    return () => discovery.dispose();
+  }, [discovery]);
 
   const online = conn.status === 'online';
   const codeOk = CODE_RE.test(code);
@@ -274,6 +292,11 @@ export function LobbyScreen() {
     }
   };
   const create = () => run('create', () => net.request('room.create', { mode: roomMode, difficulty, ...(roomMode === 'coop' ? { capacity } : {}) }));
+  const quickMatch = () => run('quickMatch', () => net.request('lobby.quickMatch', matchCapacity ? { capacity: matchCapacity } : {}).catch((err) => {
+    if (err?.code === ERR.ROOM_NOT_FOUND) { toast(t('暂无可加入的房间，请稍后重试或创建同盟。'), 'warn'); return; }
+    throw err;
+  }));
+  const directoryJoin = (roomCode) => run('directoryJoin', () => net.request('room.join', { code: roomCode }));
   const join = (c = code) => {
     // `onClick=${join}` hands the click EVENT as the first argument, and a default parameter only applies to
     // `undefined` — codeArg keeps an event target out of the key and falls back to the input field
@@ -310,12 +333,17 @@ export function LobbyScreen() {
       <div class="topbar__left">
         <${Button} variant="ghost" size="sm" icon="chevronLeft" onClick=${backToTitle} title=${t('返回标题')}>${t('返回')}<//>
         <${PingPill} ms=${conn.ping} online=${online} />
+        <${LobbyOnlinePill} count=${discoveryState.online} connected=${online} />
+        <${AssetCacheButton} />
       </div>
       <div class="topbar__center">
         <${MicroLabel} tone="mint">SIMULATION PROTOCOL SELECT<//>
         <h1 class="topbar__title">${t('选择模拟协议')}</h1>
       </div>
       <div class="topbar__right">
+        <${AnnouncementButton} variant="secondary" />
+        <${Button} variant="secondary" size="sm" icon="chart" class="stats-entry" onClick=${openStats} title=${t('统计数据')} aria-label=${t('统计数据')}>${t('统计')}<//>
+        <${SettingsButton} class="lobby-settings" variant="secondary" label=${t('设置')} />
         <${GuideButton} class="lobby-guide" variant="secondary" label=${t('玩法说明')} />
         <${LoadoutButton} from="lobby" size="sm" class="lobby-loadout" label=${t('干员调配')} />
         <div class="me-chip">
@@ -334,6 +362,10 @@ export function LobbyScreen() {
         <div class="mode-cards">
           ${MODE_CARDS.map((c) => html`<${ModeCard} key=${c.id} card=${c} selected=${roomMode === c.id} onSelect=${pickMode} />`)}
         </div>
+
+        <${LobbyDiscoveryPanel} state=${discoveryState} connected=${online} capacity=${matchCapacity}
+          onCapacity=${(n) => { setMatchCapacity(n); savePref('lobby.matchCapacity', n); }}
+          onOpen=${() => discovery.show()} onQuickMatch=${quickMatch} busy=${busy === 'quickMatch'} />
 
         <div class="section-label"><span class="section-label__idx num">03</span>${t('加入同盟')}<${MicroLabel}>JOIN WITH ALLIANCE KEY<//></div>
         <${Panel} class="join-panel" tone="amber">
@@ -381,5 +413,8 @@ export function LobbyScreen() {
         </div>
       </section>
     </div>
+    ${discoveryState.open ? html`<${LobbyRoomList} state=${discoveryState} connected=${online}
+      onClose=${() => discovery.close()} onRefresh=${() => discovery.refresh()} onPage=${(page) => discovery.page(page)}
+      onJoin=${directoryJoin} busy=${!!busy} />` : null}
   </div>`;
 }
