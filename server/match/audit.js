@@ -497,7 +497,7 @@ export function attachAudit(m, { invariants = true, limit = 200 } = {}) {
       const perfect = alive.filter((p) => res.has(p.playerId) && res.get(p.playerId).perfect !== false && counted(p.playerId) === 0);
       const helpers = helperOrder(m, perfect, res).map((p) => p.playerId);
       const perRound = Math.max(1, Math.min(2, gd.unite.maxHelpers));
-      const roundsLimit = uniteRoundLimit(m.poolGroups?.length || 1);
+      const roundsLimit = uniteRoundLimit(m.players.size);
       if (!Number.isInteger(plan.round) || plan.round < 1 || plan.round > roundsLimit
         || !Number.isInteger(plan.roundsMax) || plan.roundsMax < plan.round || plan.roundsMax > roundsLimit)
         fail(`联防 wave ${plan.round}/${plan.roundsMax} exceeds the fixed-group limit ${roundsLimit}`);
