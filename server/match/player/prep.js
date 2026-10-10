@@ -8,6 +8,9 @@ import { ERR, PHASE } from '../../../shared/constants.js';
 import { freeSlot } from '../board.js';
 import { OK, fail } from './common.js';
 
+/** [CUSTOM] 合成精锐的奖励是否占用共享卡池：false = 额外获取（不扣池、不受库存限制，卖掉也不返还副本）。 */
+const MERGE_REWARD_TAKES_POOL = false;
+
 export class PlayerPrep {
   _gate({ allowWhenReady = false } = {}) {
     if (!this.alive) return fail(ERR.ELIMINATED);
@@ -24,6 +27,8 @@ export class PlayerPrep {
   pickReward(idx) {
     const g = this._gate(); if (g) return g;
     const offer = this.offers[0];
+    // [CUSTOM] 合成奖励：额外获取，不占共享池
+    const rewardFree = !MERGE_REWARD_TAKES_POOL && offer.source === 'merge';
     if (!offer) return fail(ERR.BAD_TARGET, 'no reward');
     if (!Number.isInteger(idx) || idx < 0 || idx >= offer.slots.length) return fail(ERR.BAD_TARGET);
     const slot = offer.slots[idx];
@@ -38,7 +43,7 @@ export class PlayerPrep {
       const base = this.gd.baseIdOf(slot.id);
       const need = rec.isGolden ? this.gd.goldenCopies : 1;
       const pool = this.poolOf(base); // the shared pool, or this player's 自选 stock
-      if (pool.has(base) && pool.left(base) < need) return fail(ERR.SOLD_OUT);
+      if (!rewardFree && pool.has(base) && pool.left(base) < need) return fail(ERR.SOLD_OUT);
       if (handFull) return fail(ERR.HAND_FULL);
     }
     const price = Number.isFinite(slot.price) && slot.price > 0 ? Math.trunc(slot.price) : 0;
@@ -47,7 +52,10 @@ export class PlayerPrep {
     this.offers.shift();
     if (price > 0) this.spend(price);
     if (slot.kind === 'item') this.acquireItem(slot.id, { source: 'reward' });
-    else this.acquireChess(slot.id, { source: 'reward' });
+    else {
+      const piece = this.acquireChess(slot.id, { source: 'reward', fromPool: !rewardFree });
+      if (rewardFree && piece) piece.rewardFree = true;
+    }
     this._afterSpend(price, 'reward');
     this.recompute();
     return OK;

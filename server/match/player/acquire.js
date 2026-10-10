@@ -8,6 +8,9 @@
 import { pieceDir, parseDir, mergeTile } from '../board.js';
 import { MAX_OFFER_SLOTS } from './common.js';
 
+/** [CUSTOM] 合成奖励的候选是否忽略共享池库存：true = 池子被抢光的干员仍会出现在奖励里（按设计份数加权）。 */
+const MERGE_REWARD_IGNORES_POOL = true;
+
 export class PlayerAcquire {
   /** Normal copies of a base chess currently owned (board/hand/temp). */
   countCopies(baseId) {
@@ -143,7 +146,8 @@ export class PlayerAcquire {
     const goldenId = this.gd.goldenIdOf(piece.id);
     if (!goldenId) return false;
     const base = this.gd.baseIdOf(piece.id);
-    const extra = Math.max(0, this.gd.goldenCopies - (piece.poolCopies || 0));
+    // [CUSTOM] 合成奖励额外获得的干员不补票（它本来就不占池）
+    const extra = piece.rewardFree ? 0 : Math.max(0, this.gd.goldenCopies - (piece.poolCopies || 0));
     piece.poolCopies = (piece.poolCopies || 0) + this.poolOf(base).take(base, extra);
     piece.id = goldenId;
     this.recompute();
@@ -214,6 +218,8 @@ export class PlayerAcquire {
    * the slot's level) — the reward is a temporary refresh of the shop ("临时刷新3名…干员") [ASSUMED].
    */
   pushRewardOffer(source = 'merge', { tier = null, ids = null, label = null } = {}) {
+    // [CUSTOM] 合成奖励的候选忽略共享池库存
+    const ignoreLeft = MERGE_REWARD_IGNORES_POOL && source === 'merge';
     const ro = this.gd.rewardOffer();
     const t = Number.isInteger(tier) ? tier : Math.min(this.shop.level + ro.tierOffset, ro.maxTier);
     // an offer never shows one operator twice, whoever built the list (user playtest #6 item 19)
@@ -223,7 +229,7 @@ export class PlayerAcquire {
       const fresh = (id) => !list.includes(id);
       for (let i = 0; i < ro.count; i++) {
         let id = null;
-        for (let tt = t; tt >= 1 && !id; tt--) id = this.pool.roll(this.m.rngShop, { tier: tt, filter: fresh, extra: this.diyRollEntries() });
+        for (let tt = t; tt >= 1 && !id; tt--) id = this.pool.roll(this.m.rngShop, { tier: tt, filter: fresh, extra: this.diyRollEntries(), ignoreLeft });
         if (id) list.push(id);
       }
     }
