@@ -224,7 +224,10 @@ export function nextUnitePlan(plan, result) {
 
 /** Battle options for the unite field (without data/logger, added by the match). */
 export function uniteBattleOpts(m, plan, timeLimit) {
-  const wave = buildUniteWave(m.gd, plan.leaked, plan.helpers.length, timeLimit);
+  // [CUSTOM] 本回合参与联防的助手总数（已上场 + 本波 + 候补）-> 刷怪间隔系数
+  const helperTotal = (Array.isArray(plan.usedHelpers) ? plan.usedHelpers.length : 0)
+    + plan.helpers.length + (Array.isArray(plan.reserveHelpers) ? plan.reserveHelpers.length : 0);
+  const wave = buildUniteWave(m.gd, plan.leaked, plan.helpers.length, timeLimit, helperTotal);
   const players = plan.helpers.map((ps, i) => {
     const carry = new Map();
     const r = m.lastResults.get(ps.playerId);

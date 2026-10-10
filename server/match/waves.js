@@ -615,7 +615,13 @@ export function previewOf(spawns) {
  * @param {number} helperCount 1 | 2
  * @returns {{ templateId: string|null, spawns: object[], routes: object[] }}
  */
-export function buildUniteWave(gd, leaked, helperCount, timeLimit) { // eslint-disable-line no-unused-vars
+/** [CUSTOM] 联防刷怪间隔：每多 1 名兜怪者 -5%，最多 -40%。helperTotal = 本回合参与联防的助手总数。 */
+const UNITE_HELPER_INTERVAL_STEP = 0.05;
+const UNITE_HELPER_INTERVAL_MIN = 0.6;
+
+export function buildUniteWave(gd, leaked, helperCount, timeLimit, helperTotal = helperCount) {
+  // [CUSTOM] 间隔系数（2 人 = 1.0）
+  const helperIntervalScale = Math.max(UNITE_HELPER_INTERVAL_MIN, Math.pow(1 - UNITE_HELPER_INTERVAL_STEP, Math.max(0, helperTotal - 2))); // eslint-disable-line no-unused-vars
   const templates = gd.unite.templates;
   const templateId = templates[String(helperCount)] || templates[helperCount] || null;
   const tpl = templateId ? gd.wave(templateId) : null;
@@ -649,12 +655,12 @@ export function buildUniteWave(gd, leaked, helperCount, timeLimit) { // eslint-d
     const window = a ? Math.max(1, Number.isInteger(a.count) ? a.count : 1) * Math.max(0, Number(a.interval) || 0) : 40;
     let most = 1;
     for (const units of owners.values()) most = Math.max(most, units.length);
-    const step = Math.min(Math.max(window / most, MIN_ACTION_INTERVAL_RATIO * window), UNITE_MAX_UNIT_STEP);
+    const step = helperIntervalScale * Math.min(Math.max(window / most, MIN_ACTION_INTERVAL_RATIO * window), UNITE_MAX_UNIT_STEP);
     let routeIndex = a && Number.isInteger(a.routeIndex) ? a.routeIndex : routeByMotion(routes, flyOf.get(idx));
     if (routeIndex < 0 || routeIndex >= routes.length) routeIndex = 0;
     let k = 0;
     for (const units of owners.values()) {
-      const start = t0 + k * UNITE_OWNER_STEP;
+      const start = t0 + k * UNITE_OWNER_STEP * helperIntervalScale;
       units.forEach((l, i) => {
         const spec = {
           time: start + i * step, enemyKey: l.enemyKey, routeIndex, count: 1, interval: 0,
