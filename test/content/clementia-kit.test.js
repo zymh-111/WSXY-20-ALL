@@ -319,16 +319,16 @@ test('[CUSTOM] 她的卫戍特质已换成自定义效果，且不再有“获�
   const ch = chess.chess ?? chess;
 
   const base = CHESS_E.replace(/_b$/, '_a');
-  for (const [id, pct] of [[base, '1%'], [CHESS_E, '2%']]) {
+  for (const [id, step] of [[base, 3], [CHESS_E, 2]]) {
     const rec = ch[id];
     assert.ok(rec, `${id} 存在`);
     assert.equal(rec.garrisonIds.length, 1, `${id} 只挂一条特质卫戍，实得 ${JSON.stringify(rec.garrisonIds)}`);
     const gid = rec.garrisonIds[0];
     const gr = g[gid];
     assert.ok(gr, `${id} 的特质卫戍 ${gid} 在 data/garrisons.json 里`);
-    assert.match(gr.desc, /每 3 层/, `文案是自定义特质：${gr.desc}`);
-    assert.ok(gr.desc.includes(`攻击力+${pct}`), `文案含攻击力+${pct}：${gr.desc}`);
-    assert.ok(gr.desc.includes(`元素伤害+${pct}`), `文案含元素伤害+${pct}：${gr.desc}`);
+    assert.match(gr.desc, new RegExp(`每 ${step} 层`), `文案步长：${gr.desc}`);
+    assert.ok(gr.desc.includes('攻击力+1%'), `文案含攻击力+1%：${gr.desc}`);
+    assert.ok(gr.desc.includes('元素伤害+1%'), `文案含元素伤害+1%：${gr.desc}`);
     // 不能带任何会加层/生效的字段
     const s = JSON.stringify(gr);
     assert.ok(!/bond_add_count|SERVER_ADD_BOND|ADD_BOND|max_add_count_per_battle/.test(s), `${gid} 不含加层字段`);
@@ -341,4 +341,40 @@ test('[CUSTOM] 她的卫戍特质已换成自定义效果，且不再有“获�
   assert.equal(g.garrison_155_a.effectType, 'ADD_BOND', '锏的 garrison_155_a 原样保留');
   assert.equal(g.garrison_65_a.effectType, 'SERVER_ADD_BOND_CHESS_ALL', '锏的 garrison_65_a 原样保留');
   assert.ok(g.garrison_155_a.owners.includes('chess_char_6_19_a'), 'garrison_155_a 仍属于锏');
+  // 普通每 3 层、精锐每 2 层（两者都是 +1%）
+  assert.match(g[ch[base].garrisonIds[0]].desc, /每 3 层/, '普通形态文案：每 3 层');
+  assert.match(g[ch[CHESS_E].garrisonIds[0]].desc, /每 2 层/, '精锐形态文案：每 2 层');
+});
+
+test('[CUSTOM] 精锐形态（每 2 层 +1%）与普通形态（每 3 层 +1%）的步长都对', async () => {
+  const bondKit = () => ({
+    install(battle, unit) {
+      // `unit.def.raw.isGolden` / `unit.def.golden` 是引擎标注的形态（普通 false / 精锐 true）
+      const step = (unit.def?.raw?.isGolden || unit.def?.golden) ? 2 : 3;
+      battle.every(0.5, () => {
+        if (!unit.alive || !unit.deployed) return;
+        const pct = Math.floor((battle.getPlayer(unit.ownerId)?.bonds?.egirShip?.layers ?? 0) / step) / 100;
+        battle.addBuff(unit, { key: `clemnt:egirAtk:${unit.id}`, mods: { atkPct: pct }, duration: 0.6, refresh: 'replace', source: unit });
+      }, { owner: unit, immediate: true });
+    },
+  });
+  const run = (chessId, layers) => {
+    const h = mk({
+      seed: 31, units: [{ chessId, row: 10, col: 3 }],
+      bonds: layers > 0 ? { egirShip: { count: 3, active: true, tier: 1, layers } } : {},
+      kits: { [chessId]: bondKit },
+    });
+    h.step(1);
+    return h.unit(chessId);
+  };
+  // 普通：3 层 +1%、2 层 +0%
+  const nChess = CHESS_E.replace(/_b$/, '_a');
+  const n2 = run(nChess, 2), n3 = run(nChess, 3), n0 = run(nChess, 0);
+  assert.ok(Math.abs(n3.s.atk / n0.s.atk - 1 - 0.01) < 1e-6, `普通 3 层 → +1%，实得 +${((n3.s.atk / n0.s.atk - 1) * 100).toFixed(2)}%`);
+  assert.ok(Math.abs(n2.s.atk / n0.s.atk - 1) < 1e-6, '普通 2 层 → 不足 3 层，无加成');
+  // 精锐：2 层 +1%、3 层 +1%（floor(3/2)=1）、4 层 +2%
+  const e0 = run(CHESS_E, 0), e2 = run(CHESS_E, 2), e3 = run(CHESS_E, 3), e4 = run(CHESS_E, 4);
+  assert.ok(Math.abs(e2.s.atk / e0.s.atk - 1 - 0.01) < 1e-6, `精锐 2 层 → +1%，实得 +${((e2.s.atk / e0.s.atk - 1) * 100).toFixed(2)}%`);
+  assert.ok(Math.abs(e3.s.atk / e0.s.atk - 1 - 0.01) < 1e-6, '精锐 3 层 → 仍是 +1%（每 2 层一档）');
+  assert.ok(Math.abs(e4.s.atk / e0.s.atk - 1 - 0.02) < 1e-6, `精锐 4 层 → +2%，实得 +${((e4.s.atk / e0.s.atk - 1) * 100).toFixed(2)}%`);
 });

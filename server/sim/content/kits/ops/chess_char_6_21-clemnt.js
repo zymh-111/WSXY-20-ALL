@@ -68,7 +68,7 @@ function touches(e, x, y) {
     : Math.abs(e.x - x) <= CATCH_HALF + 1e-9 && Math.abs(e.y - y) <= CATCH_HALF + 1e-9;
 }
 
-function clemnt(bb, raw) {
+function clemnt(bb, raw, def) {
   const t0 = talentBb(raw, 0), t1 = talentBb(raw, 1);
   const b1 = skillBb(raw, S1), b2 = skillBb(raw, S2), b3 = skillBb(raw, S3);
   // S1 冲蚀 / S3 与海为敌 riders: "造成相当于本次攻击伤害 N% 的侵蚀损伤" (element gauge, type 'element').
@@ -251,7 +251,9 @@ function clemnt(bb, raw) {
     ],
     install(battle, unit) {
       // ── [CUSTOM] 本分支自定义：克莱门莎的个人特质（在阿戈尔阵营中生效）─────────────────────────────
-      // 每 3 层阿戈尔：克莱门莎自身攻击力 +1%；她攻击范围内的敌人受到的元素伤害 +1%（元素脆弱）。
+      // 每 N 层阿戈尔：克莱门莎自身攻击力 +1%；她攻击范围内的敌人受到的元素伤害 +1%（元素脆弱）。
+      //   · 普通形态：每 3 层 +1%
+      //   · 精锐形态：每 2 层 +1%
       // 这是**她个人的特质**，不是阿戈尔盟约的改动（data/bonds.json 未改）、也不是策略效果：
       //   · 攻击力只加在她自己身上（不给队友）
       //   · 元素脆弱只挂在她攻击范围内的敌人身上（对任何来源的元素伤害都生效，符合官方「元素脆弱」语义）
@@ -259,14 +261,16 @@ function clemnt(bb, raw) {
       // 吞噬本身会加层，用一次性快照会算少。
       //
       // 注意：引擎的 content/traitMods.js 只识别「攻击范围内存在N名敌人时攻击速度+X」这一种条件形态，
-      // 所以这种"每3层"的条件只能写在 kit 里，改 chess.trait 的 bb 是不生效的。
+      // 所以这种"每N层"的条件只能写在 kit 里，改 chess.trait 的 bb 是不生效的。
       //
       // 攻击力走 atkPct 乘区（units.js 的 atk 计算链）；元素易伤走 elemFragile（elementalTakenMul，
       // 只作用于「元素伤害」这一类型，不影响侵蚀损伤的填条）。
       {
         const EGIR_BOND = 'egirShip';
-        const LAYERS_PER_STEP = 3;
-        const layerBonus = () => Math.floor(bondLayers(battle, unit, EGIR_BOND) / LAYERS_PER_STEP) / 100;
+        const LAYERS_NORMAL = 3;   // 普通：每 3 层 +1%
+        const LAYERS_ELITE = 2;    // 精锐：每 2 层 +1%
+        const stepOf = () => (raw?.isGolden || def?.isGolden || def?.golden ? LAYERS_ELITE : LAYERS_NORMAL);
+        const layerBonus = () => Math.floor(bondLayers(battle, unit, EGIR_BOND) / stepOf()) / 100;
         // 自己的攻击力（只挂在自己身上）
         battle.every(0.5, () => {
           if (!up(unit)) return;

@@ -33,7 +33,7 @@ const NEW_A = 'garrison_155_clem_a';
 const NEW_B = 'garrison_155_clem_b';
 
 const DESC_A = '<@ba.kw>阿戈尔</>每 3 层，克莱门莎攻击力<@ba.vup>+1%</>，其攻击范围内敌人受到的元素伤害<@ba.vup>+1%</>';
-const DESC_B = '<@ba.kw>阿戈尔</>每 3 层，克莱门莎攻击力<@ba.vup>+2%</>，其攻击范围内敌人受到的元素伤害<@ba.vup>+2%</>';
+const DESC_B = '<@ba.kw>阿戈尔</>每 2 层，克莱门莎攻击力<@ba.vup>+1%</>，其攻击范围内敌人受到的元素伤害<@ba.vup>+1%</>';
 
 if (!existsSync(TABLE)) {
   console.error(`[中止] 找不到 ${TABLE}，请在仓库根目录运行（或把表路径作为参数传入）。`);
@@ -82,7 +82,8 @@ const displayGarrison = (tpl, descRaw, owner) => ({
 
 const idsA = chessDict[BASE_A].garrisonIds || [];
 const idsB = chessDict[BASE_B].garrisonIds || [];
-const done = garrisons[NEW_A]?.garrisonDesc && garrisons[NEW_B]?.garrisonDesc
+const done = garrisons[NEW_A]?.garrisonDesc === DESC_A
+  && garrisons[NEW_B]?.garrisonDesc === DESC_B
   && garrisons[NEW_A]?.effectType === 'NONE_DISPLAY_ONLY'
   && garrisons[NEW_B]?.effectType === 'NONE_DISPLAY_ONLY'
   && idsA.length === 1 && idsA[0] === NEW_A
