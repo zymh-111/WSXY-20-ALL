@@ -125,46 +125,43 @@ function makoto(bb, raw, def) {
 
   // ── 替身的攻击：三技能各自的形态 ──────────────────────────────────────────────────────────
   /**
-   * 一次替身攻击的结算。`mode` 取 'orpheus'（俄耳甫斯）或 'thanatos'（塔纳托斯）。
-   *
-   * 引擎的普通攻击管线在他身上已经先打了一段**物理**普通伤害（他是 MELEE、分支给定物理），而官方这两套
-   * 替身攻击是**法术**且倍率是 210% / 220%。`spec.attack` 的覆盖只在技能 `active` 时生效
-   * （ai.js effectiveProfile → skill.attackOverride()），而他的技能是"被动形态 + 主动切换"、被动下没有
-   * override，所以这里按**补齐差额**结算：(目标倍率 − 100%) × 攻击力 的一段法术伤害，
-   * 使一次攻击的总伤害 = 目标倍率 × 攻击力。[ASSUMED] 伤害类型构成（物理基础 + 法术补差）与官方
-   * "整段法术"不同，但总倍率一致；恐惧/斩杀/治疗都按官方语义独立结算。
+   * 一次替身攻击的结算。**黑板按"所选的技能"取，不按形态名取** —— 这是关键：
+   * S3 的形态2 也是塔纳托斯（同一个面具、同一套动画），但它用的是 S3 自己的黑板（弱点伤害），
+   * 没有斩杀、没有恐惧。早先按形态名取黑板，导致 S3 形态2 把 S2 的斩杀（attack@kill_damage=9999999）
+   * 也一起带了出来 —— 实测就是伤害里蹦出 9999999。
    */
   const dollAttack = (battle, unit, mode) => {
-    const src = mode === 'orpheus' ? s1 : s2;
-    const scale = num(mode === 'orpheus'
-      ? (s1['attack@atk_scale'] ?? bb['attack@atk_scale'])
-      : (s2['attack@atk_scale'] ?? bb['attack@atk_scale']), 1);
+    const cur = curId();
+    // 所属技能：S1 → s1（俄耳甫斯），S2 → s2（塔纳托斯：多目标/恐惧/斩杀），S3 → s3（弱点伤害/治疗/闪避）
+    const src = cur === S1 ? s1 : cur === S2 ? s2 : s3;
+    const isOrpheus = cur === S1 || mode === 'orpheus';   // S1 的替身本就是俄耳甫斯；S3 形态3 也走俄耳甫斯
+    const scale = num(src['attack@atk_scale'] ?? bb['attack@atk_scale'], 1);
     const atk = unit.s.atk;
 
     // 俄耳甫斯：范围内有生命值低于 50% 的友方干员时"改为"治疗他 → 这一次攻击不造成伤害
-    if (mode === 'orpheus') {
+    if (isOrpheus) {
       const hurt = (battle.injuredAlliesInKeys?.(rangeKeysOf(unit), unit) ?? [])
         .filter((a) => up(a) && a.hp < a.s.maxHp * 0.5);
       if (hurt.length) {
-        const heal = atk * num(s1['attack@heal_scale'] ?? bb['attack@heal_scale'], 0);
+        const heal = atk * num(s1['attack@heal_scale'] ?? src['attack@heal_scale'] ?? bb['attack@heal_scale'], 0);
         if (heal > 0) battle.heal(unit, hurt[0], heal, { skillHeal: true });
         return;
       }
     }
 
-    const targets = mode === 'orpheus'
-      ? enemiesInRange(battle, unit).slice(0, 1)
-      : enemiesInRange(battle, unit).slice(0, Math.max(1, num(s2['attack@max_target'], 1)));
+    const maxTargets = isOrpheus ? 1 : Math.max(1, num(src['attack@max_target'], 1));
+    const targets = enemiesInRange(battle, unit).slice(0, maxTargets);
     const bonus = atk * Math.max(0, scale - 1);
     if (bonus > 0) for (const e of targets) {
       battle.dealDamage(unit, e, { amount: bonus, type: 'arts', isAttack: true, tags: ['skill', 'makoto:doll'] });
     }
-    if (mode === 'thanatos') {
+
+    // 恐惧与斩杀**只有 S2（塔纳托斯的囚锁）有**（官方：S3 是"弱点伤害"，没有这两项）
+    if (cur === S2) {
       const p = num(s2['attack@prob'], 0);
       if (p > 0) for (const e of targets) {
         if (e.alive && battle.rng() < p) battle.applyStatus(e, 'fear', { duration: num(s2['attack@fear'], 0), source: unit });
       }
-      // 范围内**恐惧中**的敌人，生命值低于攻击力 K% 则立刻倒下
       const k = num(s2['attack@kill_atk_scale'], 0);
       const dmg = num(s2['attack@kill_damage'], 9999999);
       if (k > 0) for (const e of enemiesInRange(battle, unit)) {
