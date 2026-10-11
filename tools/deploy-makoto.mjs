@@ -2,6 +2,10 @@
 // [CUSTOM] 部署干员「结城理」(char_4217_makoto) 的素材 —— 头像 / 立绘 / 技能图标 / 战场模型(spine)
 // 与 deploy-clementia.mjs 同一套路：本地副本优先（随仓库传递），否则从社区资源仓库下载。
 //
+// ⚠️ 重建数据请用 `bash tools/rebuild-makoto.sh`（或 `bash tools/setup-makoto.sh` 一键装完），
+//    **不要**直接跑 `npm run build-data` —— 那会不带 DSH_DIY_FORCE_PICKS/DSH_DIY_FORCE_BONDS，
+//    重建出不含结城理的 data/backups.json，他会从自选池里消失。
+//
 // 用法：node tools/deploy-makoto.mjs [仓库根目录]
 // 之后：node tools/apply-makoto-patch.mjs && npm run build-data && node tools/apply-makoto-spine.mjs
 
