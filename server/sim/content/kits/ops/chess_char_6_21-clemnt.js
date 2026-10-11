@@ -57,6 +57,10 @@ const immunity = (e) => e.def?.raw?.stats?.otherImmunities ?? [];
 const cannotCarry = (e) => e.s.flags.selfBound || e.def?.immune?.has('exile') || e.def?.immune?.has('teleport')
   || immunity(e).some((s) => /teleport|transmit|exile/i.test(String(s)));
 
+/** [CUSTOM] 阿戈尔层数（实时）：自己所属玩家在这场战斗里的该盟约层数，读不到按 0。 */
+const bondLayers = (battle, unit, bondId) =>
+  num(battle.getPlayer?.(unit?.ownerId)?.bonds?.[bondId]?.layers, 0);
+
 /** Cabin's 1.1 × 1.1 collision square; huge bodies use the engine hit rectangle. */
 function touches(e, x, y) {
   const r = hitRect(e);
@@ -246,6 +250,44 @@ function clemnt(bb, raw) {
       } },
     ],
     install(battle, unit) {
+      // ── [CUSTOM] 本分支自定义：克莱门莎的个人特质（在阿戈尔阵营中生效）─────────────────────────────
+      // 每 3 层阿戈尔：克莱门莎自身攻击力 +1%；她攻击范围内的敌人受到的元素伤害 +1%（元素脆弱）。
+      // 这是**她个人的特质**，不是阿戈尔盟约的改动（data/bonds.json 未改）、也不是策略效果：
+      //   · 攻击力只加在她自己身上（不给队友）
+      //   · 元素脆弱只挂在她攻击范围内的敌人身上（对任何来源的元素伤害都生效，符合官方「元素脆弱」语义）
+      // 触发条件读**实时**层数（battle.getPlayer(unit.ownerId).bonds.egirShip.layers）：阿戈尔战斗开始时的
+      // 吞噬本身会加层，用一次性快照会算少。
+      //
+      // 注意：引擎的 content/traitMods.js 只识别「攻击范围内存在N名敌人时攻击速度+X」这一种条件形态，
+      // 所以这种"每3层"的条件只能写在 kit 里，改 chess.trait 的 bb 是不生效的。
+      //
+      // 攻击力走 atkPct 乘区（units.js 的 atk 计算链）；元素易伤走 elemFragile（elementalTakenMul，
+      // 只作用于「元素伤害」这一类型，不影响侵蚀损伤的填条）。
+      {
+        const EGIR_BOND = 'egirShip';
+        const LAYERS_PER_STEP = 3;
+        const layerBonus = () => Math.floor(bondLayers(battle, unit, EGIR_BOND) / LAYERS_PER_STEP) / 100;
+        // 自己的攻击力（只挂在自己身上）
+        battle.every(0.5, () => {
+          if (!up(unit)) return;
+          const pct = layerBonus();
+          if (pct > 0) {
+            battle.addBuff(unit, { key: `clemnt:egirAtk:${unit.id}`, mods: { atkPct: pct }, duration: 0.6, refresh: 'replace', source: unit, tags: ['trait', 'clemnt:egir'] });
+          } else {
+            battle.removeBuff(unit, `clemnt:egirAtk:${unit.id}`);
+          }
+        }, { owner: unit, immediate: true });
+        // 攻击范围内的敌人：元素脆弱
+        battle.every(0.5, () => {
+          if (!up(unit)) return;
+          const frag = layerBonus();
+          if (!(frag > 0)) return;
+          for (const e of battle.enemiesInKeys(unit.rangeKeys, unit, AIR)) {
+            battle.applyStatus(e, 'elemFragile', { duration: 0.6, value: frag, source: unit });
+          }
+        }, { owner: unit, immediate: true });
+      }
+
       if (unit.skill?.id === S2) {
         // The extended attack grid of S2 hits air while her normal attacks do not: hand the skill a trigger range
         // whose profile allows flyers, so 自动/手动 opening it also counts enemies in the enlarged range.

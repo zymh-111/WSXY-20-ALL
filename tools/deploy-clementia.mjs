@@ -238,9 +238,24 @@ else {
 }
 
 // ─────────────────────────────────────────────
-// 5) 修正 build-data.mjs 的可见棋子断言
+// 5) 把她的卫戍特质换成自定义阿戈尔特质
 // ─────────────────────────────────────────────
-log('\n=== 5) 修正构建断言（可见棋子 112 → 113）===');
+log('\n=== 5) 自定义阿戈尔特质（替换“获得时/部署时 +层数”）===');
+const TR = resolve(ROOT, 'tools/apply-clementia-trait.mjs');
+if (!existsSync(TR)) log('  [跳过] tools/apply-clementia-trait.mjs 不存在');
+else {
+  try {
+    execFileSync('node', [TR], { stdio: 'inherit', cwd: ROOT });
+  } catch (e) {
+    log('  [失败] apply-clementia-trait.mjs 未成功（退出码 ' + (e && e.status) + '）');
+    failed++;
+  }
+}
+
+// ─────────────────────────────────────────────
+// 6) 修正 build-data.mjs 的可见棋子断言
+// ─────────────────────────────────────────────
+log('\n=== 6) 修正构建断言（可见棋子 112 → 113）===');
 const BP = resolve(ROOT, 'tools/build-data.mjs');
 if (!existsSync(BP)) log('  [跳过] tools/build-data.mjs 不存在');
 else {
@@ -259,9 +274,9 @@ else {
 }
 
 // ─────────────────────────────────────────────
-// 6) 补 data/assets.json 的 spine 清单条目
+// 7) 补 data/assets.json 的 spine 清单条目
 // ─────────────────────────────────────────────
-log('\n=== 6) 补 spine 清单条目（客户端靠它加载战场小人）===');
+log('\n=== 7) 补 spine 清单条目（客户端靠它加载战场小人）===');
 const SP = resolve(ROOT, 'tools/apply-clementia-spine.mjs');
 if (!existsSync(SP)) log('  [跳过] tools/apply-clementia-spine.mjs 不存在，请手动补 spine 条目');
 else {

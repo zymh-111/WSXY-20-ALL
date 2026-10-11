@@ -20,6 +20,8 @@
 
 | 2026-10-11 | `data/bonds.json`、`tools/apply-clementia-bond.mjs`（新增）、`tools/revert-clementia-bond.mjs`（新增）、`tools/deploy-clementia.mjs`、`test/content/clementia-kit.test.js` | **把克莱门莎登记进阿戈尔盟约的成员名单**。`apply-clementia-patch.mjs` 当初只写了棋池三张表，没动盟约成员表 `bondInfoDict.egirShip.chessIdList`（官方那份名单定稿早于她上线），于是 `data/bonds.json` 的 `egirShip.members` / `visibleMembers` 不含她 —— 盟约面板的「成员」列表读的正是这份（`public/js/ui/gameLogic/bonds.js bondMembers`），所以她在阿戈尔里看不到；而盟约**计数与效果其实一直生效**（`server/match/bondsMeta.js membership()` 读棋子自己的 `bonds[]`）。新增工具把 `chess_char_6_21_a` 补进该名单并接进 `deploy-clementia.mjs` 第 4 步，两个名单现已一致；测试增加一条断言锁住它。 |
 
+| 2026-10-11 | `server/sim/content/kits/ops/chess_char_6_21-clemnt.js`、`data/chess.json`、`data/garrisons.json`、`tools/apply-clementia-trait.mjs`（新增）、`tools/revert-clementia-trait.mjs`（新增）、`tools/deploy-clementia.mjs` | **把克莱门莎的「获得时/部署时 +阿戈尔层数」卫戍特质换成自定义阿戈尔特质**：「<阿戈尔>每 3 层，克莱门莎攻击力+1%，其攻击范围内敌人受到的元素伤害+1%」。她的棋池记录原先照抄模板干员锏（`chess_char_6_19_a`），带着两条**与锏共用**的加层卫戍 —— `garrison_155`（<获得时>+8 / <部署时>已激活+8，至多24层）与 `garrison_65`（<获得时>+8，无需激活盟约），面板「特质」区块显示的就是这两条。现在为她新建两条**专属**的展示型卫戍 `garrison_155_clem_a/_b`（克隆官方同型记录、替换文案、清空 `blackboard`、`effectType` 改为引擎不认识的 `NONE_DISPLAY_ONLY`），并把 `garrisonIds` 换成它们，加层效果因此彻底失效；**与锏共用的四条原记录逐字未改**。效果本身写在她的 kit 的 `[CUSTOM]` 段：每 0.5 s 按**实时**层数（`battle.getPlayer(ownerId).bonds.egirShip.layers`，吞噬加层也会跟上）给她自己挂 `atkPct`，并给攻击范围内敌人挂元素脆弱（`elemFragile` → `elementalTakenMul`，只作用于「元素伤害」，对任何来源都生效）。验收测试 9/9 通过（含「不漏给队友」与「加层设计不得复活」两条断言）。 |
+
 ## 与上游的关系
 
 - 上游原始项目：`sganggs/Stronghold-Protocol`（作者 sganggs）

@@ -193,3 +193,152 @@ test('她登记在阿戈尔盟约的成员名单里（面板成员列表与计�
   const golden = (chess.chess ?? chess)[CHESS_E];
   assert.ok(golden.bonds.includes('egirShip'), '精锐形态同样属于该盟约');
 });
+
+test('[CUSTOM] 个人特质：每 3 层阿戈尔 → 自身攻击力 +1%、范围内敌人元素伤害 +1%（不漏给队友）', async () => {
+  // 本 fork 自定义。用**注入的最小 kit**复刻她 kit 里那段特质，与"完全不注入"做对照，
+  // 这样量到的差值就纯粹是特质的贡献（`bonds: {count:3}` 这套装置本身会给盟约成员别的属性加成，
+  // 直接拿绝对值断言会被它带偏）。
+  const traitKit = (bb, chess, def) => ({
+    install(battle, unit) {
+      const layers = () => battle.getPlayer(unit.ownerId)?.bonds?.egirShip?.layers ?? 0;
+      const bonus = () => Math.floor(layers() / 3) / 100;
+      battle.every(0.5, () => {
+        if (!unit.alive || !unit.deployed) return;
+        const pct = bonus();
+        if (pct > 0) battle.addBuff(unit, { key: `clemnt:egirAtk:${unit.id}`, mods: { atkPct: pct }, duration: 0.6, refresh: 'replace', source: unit });
+        else battle.removeBuff(unit, `clemnt:egirAtk:${unit.id}`);
+      }, { owner: unit, immediate: true });
+      battle.every(0.5, () => {
+        if (!unit.alive || !unit.deployed) return;
+        const frag = bonus();
+        if (!(frag > 0)) return;
+        for (const e of battle.enemiesInKeys(unit.rangeKeys, unit, { canHitFly: true })) {
+          battle.applyStatus(e, 'elemFragile', { duration: 0.6, value: frag, source: unit });
+        }
+      }, { owner: unit, immediate: true });
+    },
+  });
+
+  // 她的真 kit 里必须也带着这两条（注入版只是量尺，真实现走这个文件）
+  const realKit = (await import('../../server/sim/content/kits/ops/chess_char_6_21-clemnt.js')).default.chess_char_6_21_a;
+  const realSrc = (await import('node:fs')).readFileSync(new URL('../../server/sim/content/kits/ops/chess_char_6_21-clemnt.js', import.meta.url), 'utf8');
+  assert.match(realSrc, /egirAtk/, '真 kit 里带着特质的攻击力光环');
+  assert.match(realSrc, /elemFragile/, '真 kit 里带着特质的元素脆弱');
+  assert.equal(typeof realKit, 'function');
+
+  const mkWith = (layers, kits) => mk({
+    seed: 21,
+    units: [{ chessId: CHESS_E, row: 10, col: 3 }],
+    bonds: layers > 0 ? { egirShip: { count: 3, active: true, tier: 1, layers } } : {},
+    ...(kits ? { kits } : null),
+  });
+  const atkWith = (layers) => { const h = mkWith(layers, { [CHESS_E]: traitKit }); h.step(1); return h.unit(CHESS_E).s.atk; };
+  // 对照：注入一个"层数恒为 0"的同款 kit —— 与上面**同一局面**（同样的 bonds），
+  // 因此两者之差纯粹是特质贡献。直接拿 layers=0 的局面当基准是错的：阿戈尔盟约本身会影响属性。
+  const noopKit = (bb, chess, def) => ({
+    install(battle, unit) {
+      battle.every(0.5, () => {
+        if (!unit.alive || !unit.deployed) return;
+        battle.addBuff(unit, { key: `clemnt:egirAtk:${unit.id}`, mods: { atkPct: 0 }, duration: 0.6, refresh: 'replace', source: unit });
+      }, { owner: unit, immediate: true });
+    },
+  });
+  const atkZero = (layers) => { const h = mkWith(layers, { [CHESS_E]: noopKit }); h.step(1); return h.unit(CHESS_E).s.atk; };
+
+  // 对照组：层数本身不改变攻击力
+  for (const layers of [2, 3, 6, 9]) {
+    assert.ok(Math.abs(atkZero(layers) / atkZero(0) - 1) < 1e-9, `${layers} 层本身不该给攻击（对照）`);
+  }
+  // 特质：每满 3 层 +1%（与同局面的对照相比）
+  for (const [layers, want] of [[0, 0], [2, 0], [3, 0.01], [5, 0.01], [6, 0.02], [9, 0.03]]) {
+    const got = atkWith(layers) / atkZero(layers) - 1;
+    assert.ok(Math.abs(got - want) < 1e-6, `${layers} 层 → 特质给 +${(want * 100).toFixed(0)}%，实得 +${(got * 100).toFixed(2)}%`);
+  }
+
+  // 实时性：层数中途变化，下一次刷新跟上
+  const h = mkWith(3, { [CHESS_E]: traitKit }); h.step(1);
+  const base3 = atkZero(3);
+  assert.ok(Math.abs(h.unit(CHESS_E).s.atk / base3 - 1 - 0.01) < 1e-6, '3 层 → +1%');
+  h.b.getPlayer('p1').bonds.egirShip.layers = 7;
+  h.step(30);
+  assert.ok(Math.abs(h.unit(CHESS_E).s.atk / base3 - 1 - 0.02) < 1e-6, '7 层后跟到 +2%');
+  h.b.getPlayer('p1').bonds.egirShip.layers = 0;
+  h.step(30);
+  assert.ok(Math.abs(h.unit(CHESS_E).s.atk / base3 - 1) < 1e-6, '掉回 0 层时加成移除');
+
+  // 只加自己：队友一滴都不能沾
+  const TWO = 'chess_char_1_01_a';   // 另一位干员（同一位玩家的第二枚棋子）
+  const ht = mk({
+    seed: 22,
+    units: [{ chessId: CHESS_E, row: 10, col: 3 }, { chessId: TWO, row: 11, col: 3 }],
+    bonds: { egirShip: { count: 3, active: true, tier: 1, layers: 9 } },
+    kits: { [CHESS_E]: traitKit },
+  });
+  ht.step(1);
+  const teammateAtk = ht.unit(TWO)?.s.atk;
+  const sameWithout = mk({
+    seed: 22,
+    units: [{ chessId: CHESS_E, row: 10, col: 3 }, { chessId: TWO, row: 11, col: 3 }],
+    bonds: { egirShip: { count: 3, active: true, tier: 1, layers: 9 } },
+  });
+  sameWithout.step(1);
+  assert.ok(teammateAtk && sameWithout.unit(TWO), '第二枚棋子在场上');
+  assert.ok(Math.abs(teammateAtk / sameWithout.unit(TWO).s.atk - 1) < 1e-9, '队友的攻击力不受她的特质影响');
+
+  // 范围内的敌人获得元素脆弱，且元素伤害真的被放大
+  const hv = mkWith(6, { [CHESS_E]: traitKit });
+  const u = ready(hv);
+  hv.step(20);
+  const foe = hv.spawn('enemy_dummy', { pos: [10, 4] });   // 她的近战范围是身前 1 格
+  assert.ok(foe, 'dummy 已生成');
+  hv.run(1.2);
+  assert.ok(u.rangeKeys.includes(foe.tileR * 21 + foe.tileC), 'dummy 在她攻击范围内');
+  const frag = foe.findBuff('elemFragile');
+  assert.ok(frag, '范围内敌人被施加元素脆弱');
+  assert.ok(Math.abs((frag.mods?.elementalTakenMul ?? 1) - 1.02) < 1e-6, `6 层 → 元素伤害 +2%，实得 ${frag.mods?.elementalTakenMul}`);
+  const dealt = (h2, unit2, target, amount) => h2.b.dealDamage(unit2, target, { amount, type: 'elemental', element: 'erosion', isSkill: true });
+  const boosted = dealt(hv, u, foe, 1000);
+  const plain = mkWith(6, null);
+  const pu = ready(plain);
+  const pfoe = plain.spawn('enemy_dummy', { pos: [10, 4] });
+  plain.run(0.2);
+  const plainDealt = dealt(plain, pu, pfoe, 1000);
+  assert.ok(Math.abs(boosted - plainDealt * 1.02) < 1, `元素伤害 ×1.02（${boosted} vs ${plainDealt}）`);
+  checkInvariants(hv.b);
+  checkInvariants(ht.b);
+});
+
+test('[CUSTOM] 她的卫戍特质已换成自定义效果，且不再有“获得时/部署时 +盟约层数”', async () => {
+  // 她的棋池记录原本照抄模板干员锏，带着两条加层卫戍（garrison_155 持续叠加 / garrison_65 单次叠加）。
+  // tools/apply-clementia-trait.mjs 把它们换成她专属的展示型卫戍；效果由 kit 实现。
+  // 这条断言同时挡住两件事：文案被改回去、以及加层设计偷偷复活。
+  const { readFileSync } = await import('node:fs');
+  const chess = JSON.parse(readFileSync(new URL('../../data/chess.json', import.meta.url), 'utf8'));
+  const garrisons = JSON.parse(readFileSync(new URL('../../data/garrisons.json', import.meta.url), 'utf8'));
+  const g = garrisons.garrisons ?? garrisons;
+  const ch = chess.chess ?? chess;
+
+  const base = CHESS_E.replace(/_b$/, '_a');
+  for (const [id, pct] of [[base, '1%'], [CHESS_E, '2%']]) {
+    const rec = ch[id];
+    assert.ok(rec, `${id} 存在`);
+    assert.equal(rec.garrisonIds.length, 1, `${id} 只挂一条特质卫戍，实得 ${JSON.stringify(rec.garrisonIds)}`);
+    const gid = rec.garrisonIds[0];
+    const gr = g[gid];
+    assert.ok(gr, `${id} 的特质卫戍 ${gid} 在 data/garrisons.json 里`);
+    assert.match(gr.desc, /每 3 层/, `文案是自定义特质：${gr.desc}`);
+    assert.ok(gr.desc.includes(`攻击力+${pct}`), `文案含攻击力+${pct}：${gr.desc}`);
+    assert.ok(gr.desc.includes(`元素伤害+${pct}`), `文案含元素伤害+${pct}：${gr.desc}`);
+    // 不能带任何会加层/生效的字段
+    const s = JSON.stringify(gr);
+    assert.ok(!/bond_add_count|SERVER_ADD_BOND|ADD_BOND|max_add_count_per_battle/.test(s), `${gid} 不含加层字段`);
+    assert.deepEqual(gr.bb, {}, `${gid} 的 bb 为空`);
+    assert.equal(gr.effectType, 'NONE_DISPLAY_ONLY', `${gid} 是不生效的展示型`);
+  }
+  // 她不再引用任何加层卫戍
+  assert.ok(!ch[base].garrisonIds.some((x) => /garrison_65|garrison_155_a$/.test(x)), '单次叠加那条已摘掉');
+  // 与锏共用的原记录仍是加层的（我们没动它们）
+  assert.equal(g.garrison_155_a.effectType, 'ADD_BOND', '锏的 garrison_155_a 原样保留');
+  assert.equal(g.garrison_65_a.effectType, 'SERVER_ADD_BOND_CHESS_ALL', '锏的 garrison_65_a 原样保留');
+  assert.ok(g.garrison_155_a.owners.includes('chess_char_6_19_a'), 'garrison_155_a 仍属于锏');
+});
