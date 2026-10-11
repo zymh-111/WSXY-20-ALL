@@ -1303,6 +1303,13 @@ function buildUnitForm(ctx, charId, status, { chessId = null, skillIndex = null 
  *   core bonds whose `powerIdList` meets them, else `constData.fallbackBondId` (协防干员) — PRTS 「卫戍协议」
  *   "甄选加入的干员会根据其实际阵营所属分配核心盟约，若没有可匹配的则改为分配协防干员盟约".
  */
+/**
+ * [CUSTOM] 额外收录进「自选池」的 charId（逗号分隔的环境变量 DSH_DIY_FORCE_PICKS）。
+ * 里面的人即使属于 DIY_EXCLUDED_TEAMS（联动 6★，原作者 2026-10-05 因版权排除）也照样进池。
+ * 默认空 ⇒ 不设置环境变量时，构建结果与上游**逐字节一致**。见 tools/apply-makoto-patch.mjs。
+ */
+const DIY_FORCE_PICKS = new Set(String(process.env.DSH_DIY_FORCE_PICKS || '').split(',').map((s) => s.trim()).filter(Boolean));
+
 function buildBackups(ctx, chess) {
   const { act, ac, charTable } = ctx;
   const need = new Map();   // charId → Map(statusKey → status)
@@ -1366,8 +1373,13 @@ function buildBackups(ctx, chess) {
       && !ch.isNotObtainable && !roster.has(id);
   }).sort(naturalCmp);
   const collabNumber = (ch) => DIY_EXCLUDED_NUMBER_PREFIXES.some((p) => new RegExp(`^${p}\\d`).test(ch.displayNumber || ''));
-  const excluded = legal6.filter((id) => teamsOf(charTable[id]).some((t) => excludedTeams.has(t)) || collabNumber(charTable[id]));
-  for (const t of DIY_EXCLUDED_TEAMS) if (!excluded.some((id) => teamsOf(charTable[id]).includes(t))) warn(`DIY_EXCLUDED_TEAMS: no owned-6★ pick of team ${t}`);
+  const excluded = legal6.filter((id) => !DIY_FORCE_PICKS.has(id)
+    && (teamsOf(charTable[id]).some((t) => excludedTeams.has(t)) || collabNumber(charTable[id])));
+  for (const t of DIY_EXCLUDED_TEAMS) {
+    const forced = [...DIY_FORCE_PICKS].filter((id) => charTable[id] && teamsOf(charTable[id]).includes(t));
+    if (forced.length) continue;   // [CUSTOM] 该联动队伍由 DSH_DIY_FORCE_PICKS 手动收录，不再告警
+    if (!excluded.some((id) => teamsOf(charTable[id]).includes(t))) warn(`DIY_EXCLUDED_TEAMS: no owned-6★ pick of team ${t}`);
+  }
   const ownedPool = legal6.filter((id) => !excluded.includes(id));
   for (const id of ownedPool) for (const st of diyStatuses.values()) addNeed(id, st);
 
@@ -1396,9 +1408,11 @@ function buildBackups(ctx, chess) {
       for (const k of ['nationId', 'groupId', 'teamId']) if (p?.[k] && !powers.includes(p[k])) powers.push(p[k]);
     }
     const hit = coreBonds.filter((b) => b.powerIdList.some((x) => powers.includes(x))).map((b) => b.bondId);
+    // [CUSTOM] DSH_DIY_FORCE_BONDS 里指定的盟约优先（见文件上方注释）
+    const forcedBonds = DIY_FORCE_BONDS[id];
     operators[id] = {
       name: ch.name, rarity: rarityOf(ch), profession: ch.profession, subProfessionId: ch.subProfessionId,
-      obtainable: !ch.isNotObtainable, powers, bonds: hit.length ? hit : [fallback],
+      obtainable: !ch.isNotObtainable, powers, bonds: forcedBonds ? forcedBonds.split("|") : (hit.length ? hit : [fallback]),
     };
   }
   return { units, tokens, diy: { slots, prototypes, locked, ownedPool, excluded, operators } };
@@ -4050,6 +4064,18 @@ function validateAll(f) {
 
 // ===== main =====================================================================================
 
+/**
+ * [CUSTOM] 自选干员的盟约覆盖：charId → bondId 数组（环境变量 DSH_DIY_FORCE_BONDS，
+ * 形如 char_4217_makoto=emptyShip）。给的就是这个数组，不再按阵营推导 —— 用于把某个
+ * 自选干员指定到特定盟约（例如结城理按需求归入「协防干员」emptyShip，而不是他隐藏势力对应的拉特兰）。
+ * 默认空 ⇒ 不设置环境变量时行为与上游一致。
+ */
+const DIY_FORCE_BONDS = Object.fromEntries(String(process.env.DSH_DIY_FORCE_BONDS || '')
+  .split(',').map((s) => s.split('=').map((x) => x.trim())).filter((p) => p.length === 2 && p[0] && p[1]));
+
+// [CUSTOM] 导出给工具复用（tools/apply-makoto-patch.mjs）：自选池与形态的唯一口径在 buildBackups 里。
+export { buildBackups, buildChess, loadContext };
+
 async function main() {
   const t0 = Date.now();
   const ctx = await loadContext();
@@ -4138,7 +4164,10 @@ async function main() {
   }
 }
 
+// [CUSTOM] 直接执行才构建；被 import 时只提供函数（供 tools/apply-makoto-patch.mjs 复用同一套口径）。
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
 main().catch((e) => {
   console.error('build-data failed:', e && e.stack ? e.stack : e);
   process.exitCode = 1;
 });
+}
