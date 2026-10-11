@@ -23,6 +23,9 @@
 //   3. 往 .cache/gamedata/excel/activity_table.json 写入 4 条棋池记录
 //      （charChessDataDict ×2、charShopChessDatas ×1、chessNormalIdLookupDict ×1）
 //   4. 修正 tools/build-data.mjs 的可见棋子断言（112 → 113）
+//   5. 调 tools/apply-clementia-spine.mjs 补上 data/assets.json 的 spine 清单条目
+//      （第 2 步只写立绘/头像/技能图标；没有 `spine` 字段客户端就画不出她的战场小人，
+//        见 tools/apply-clementia-spine.mjs 顶部说明）
 //
 // 之后请运行：npm run build-data && 重启服务 && 浏览器硬刷新
 
@@ -231,6 +234,21 @@ else {
     copyFileSync(BP, BP + '.bak-clementia-check');
     writeFileSync(BP, out);
     log('  [完成]   112 → 113');
+  }
+}
+
+// ─────────────────────────────────────────────
+// 5) 补 data/assets.json 的 spine 清单条目
+// ─────────────────────────────────────────────
+log('\n=== 5) 补 spine 清单条目（客户端靠它加载战场小人）===');
+const SP = resolve(ROOT, 'tools/apply-clementia-spine.mjs');
+if (!existsSync(SP)) log('  [跳过] tools/apply-clementia-spine.mjs 不存在，请手动补 spine 条目');
+else {
+  try {
+    execFileSync('node', [SP, ROOT], { stdio: 'inherit' });
+  } catch (e) {
+    log('  [失败] apply-clementia-spine.mjs 未成功（退出码 ' + (e && e.status) + '）—— 详情见上面输出');
+    failed++;
   }
 }
 
