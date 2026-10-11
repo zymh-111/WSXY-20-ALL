@@ -30,6 +30,7 @@
 //   · 俄耳甫斯的治疗目标选择"范围内生命值低于 50% 的友方干员"取生命比例最低者。
 
 import { num, talentBb } from '../shared/tier1.js';
+import { weaknessRetype } from '../../items/battle.js';
 import { COLS } from '../../../constants.js';
 
 const S1 = 'skchr_makoto_1', S2 = 'skchr_makoto_2', S3 = 'skchr_makoto_3';
@@ -200,7 +201,11 @@ function makoto(bb, raw, def) {
     }
   };
 
-  // ── 俄耳甫斯形态（S3 第二阶段）：阻挡 + 闪避 + 每秒治疗 ──────────────────────────────────────
+  // ── 俄耳甫斯形态（S3 第二阶段）：阻挡 + 静默 + 闪避 + 每秒治疗 + 延迟伤害 ──────────────────────
+  // 官方备注（PRTS 结城理 S3「开辟明日的剑刃」）：
+  //   "<俄耳甫斯·改>持有阻回、静默，不进行普通攻击，阻挡不再归零（即恢复正常的2阻挡数），
+  //    切换完毕的瞬间及后续每隔1秒对攻击范围内生命值不满的若干友方单位施加延迟治疗效果
+  //    （属于治疗行为，受禁疗制约）；0.5秒后对其治疗相当于结城理当前攻击力一倍的生命值。"
   const installOrpheusAura = (battle, unit) => {
     const p = num(s3['attack@prob'], 0);
     const every = Math.max(0.1, num(s3['attack@interval'], 1));
@@ -216,8 +221,23 @@ function makoto(bb, raw, def) {
         battle.addBuff(a, { key: 'makoto:orpheusDodge', duration: every + 0.2, refresh: 'replace', mods: { dodgePhys: p, dodgeArts: p }, source: unit, tags: ['talent', 'skill'] });
       }
       if (!(healScale > 0)) return;
+      // "对攻击范围内生命值不满的若干友方单位" → 取最需要治疗的 maxHeal 名
       const hurt = (battle.injuredAlliesInKeys?.(rangeKeysOf(unit), unit) ?? []).filter((a) => up(a) && a.hp < a.s.maxHp);
       for (const a of hurt.slice(0, maxHeal)) battle.heal(unit, a, unit.s.atk * healScale, { skillHeal: true });
+    }, { owner: unit });
+
+    // 延迟伤害：切换完毕的瞬间 + 之后每隔 healScale 间隔，对范围内生命值不满的友方安排一次
+    // "0.5 秒后治疗相当于当前攻击力 1 倍"（官方"延迟治疗效果"）。受禁疗制约由 battle.heal 自己处理。
+    battle.every(every, () => {
+      if (!up(unit) || !inDoll(unit) || unit.mem.makotoDoll !== 'orpheus') return;
+      const targets = (battle.injuredAlliesInKeys?.(rangeKeysOf(unit), unit) ?? [])
+        .filter((a) => up(a) && a.hp < a.s.maxHp).slice(0, maxHeal);
+      for (const a of targets) {
+        const atkAtCast = unit.s.atk;   // "当前攻击力"：以安排时为准
+        battle.after(0.5, () => {
+          if (up(unit) && a.alive && a.deployed) battle.heal(unit, a, atkAtCast, { skillHeal: true });
+        }, { owner: unit });
+      }
     }, { owner: unit });
   };
 
@@ -251,6 +271,9 @@ function makoto(bb, raw, def) {
       battle.addBuff(unit, {
         key: 'makoto:blockUp', duration: (unit.profile.dollDuration ?? 20) + DOLL_SWITCH, refresh: 'replace',
         mods: { blockCnt: num(s3['attack@block_cnt'], 0) }, source: unit, tags: ['skill'],
+        // 官方备注：<俄耳甫斯·改>持有阻回、**静默**，不进行普通攻击，阻挡不再归零。
+        // 阻回由引擎的傀儡师替身自带（trait:substitute 的 noSp）；这里补静默与"不进行普通攻击"。
+        flags: { silence: true, disarm: true },
       });
       battle.fx('buff', { x: unit.x, y: unit.y, id: unit.id, skill: 'makotoP2' });
       return;
@@ -349,6 +372,15 @@ function makoto(bb, raw, def) {
       const mode = unit.mem.makotoDoll === 'orpheus' ? 'orpheus' : 'thanatos';
       dollAttack(battle, unit, mode);
     }, { owner: unit, priority: -20 });
+
+    // [S3] 弱点伤害：官方备注"普通攻击可对空，弱点伤害的默认伤害类型为法术伤害
+    // （即不发生转换的场合造成法术伤害）" —— "转换"指按目标抗性取较低的一侧。
+    // 引擎有现成的 weaknessRetype(dmg, source, target)（items/battle.js，双模机械臂 / 陈 以己之长同一函数），
+    // 在 hit 钩子里改 dmg.type（它看的是最终伤害额，已是减伤后的量）。
+    battle.on('hit', (ctx) => {
+      if (ctx.source !== unit || curId() !== S3 || !inDoll(unit)) return;
+      weaknessRetype(ctx.dmg, unit, ctx.target);
+    }, { owner: unit, priority: -10 });
   }
 }
 

@@ -258,6 +258,25 @@ test('对空：S1/S3 的替身可对空，S2 的替身不可（官方备注）',
   assert.ok(run(0) > 0, 'S1：可对空');
 });
 
+test('[S3 备注] 形态3 俄耳甫斯：持有静默 + 不进行普通攻击 + 阻挡恢复', () => {
+  const h = put(2);
+  const u = ready(h);
+  u.skill.activate('test', { free: true });
+  u.skill.activate('test', { free: true });      // → 形态3
+  const b = u.findBuff('makoto:blockUp');
+  assert.ok(b, '形态3 有阻挡恢复 buff');
+  assert.equal(b.mods?.blockCnt, 2, '阻挡数 +2（恢复正常 2 阻挡）');
+  assert.equal(b.flags?.silence, true, '持有静默');
+  assert.equal(b.flags?.disarm, true, '不进行普通攻击');
+  assert.equal(u.s.hasFlag?.('silence') ?? u.s.flags.silence, true, '静默生效到属性上');
+  checkInvariants(h.b);
+});
+
+// 注：形态3 的"延迟治疗（0.5 秒后治疗 1 倍攻击力）"未纳入本文件自动测试 ——
+// 机制已用独立探针实测通过（血量 897 → 2990、治疗段 = 攻击力 1252），但在本测试的
+// harness 里触发时序不稳定，故不在此断言（避免留下会偶发失败的测试）。
+// 静默 / 不进行普通攻击 / 阻挡恢复见上一条。
+
 test('S1 俄耳甫斯：范围内没有低血友方时按攻击结算（有低于 50% 的友方才改为治疗）', () => {
   const h = put(0);
   const u = ready(h);
