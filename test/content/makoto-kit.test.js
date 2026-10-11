@@ -95,6 +95,34 @@ test('形态2 ← 形态3：S3 在塔纳托斯中再开一次技能 → 俄耳�
   checkInvariants(h.b);
 });
 
+test('自动开启规则：SP 满了但场上没敌人 → 不开；敌人进场 → 才开', () => {
+  // 官方 SKILL_RANGE："不通过普通攻击/治疗触发技能，仅在技能范围内存在敌人时开启"
+  const h = put(0);
+  const u = ready(h);
+  u.skill.sp = u.skill.spCost;                 // SP 灌满
+  for (let i = 0; i < 30 * 10; i++) h.step(1);  // 场上没敌人
+  assert.ok(!u.trait.doll, 'SP 满 + 没敌人 → 不开技能（本体）');
+  assert.equal(u.skill.active, false, '技能没被开启');
+  h.spawn('enemy_dummy', { pos: [10, 4] });     // 敌人进场
+  assert.ok(h.runUntil(() => u.trait.doll, 12), '敌人进场 → 自动开启并切进<替身>');
+  checkInvariants(h.b);
+});
+
+test('形态2 期间不会自动变成形态3（塔纳托斯 → 俄耳甫斯只有"再开一次技能"或"受致命伤"）', () => {
+  // 这条锁住一个容易搞错的边界：S3 进形态2（塔纳托斯）后，SP 满 + 场上有敌人时
+  // **不应该**自动开技能切成形态3 —— 否则形态2 会瞬间消失。
+  const h = put(2);
+  const u = ready(h);
+  h.spawn('enemy_dummy', { pos: [10, 4] });
+  u.skill.activate('test', { free: true });
+  assert.equal(u.mem.makotoDoll, 'thanatos', '先进形态2');
+  u.skill.sp = u.skill.spCost;                  // 即便再灌满 SP
+  for (let i = 0; i < 30 * 6; i++) h.step(1);    // 场上一直有敌人
+  assert.equal(u.mem.makotoDoll, 'thanatos', '仍然是塔纳托斯（形态2 没有被自动切走）');
+  assert.equal(u.mem.makotoPhase, 2, 'phase 仍是 2');
+  checkInvariants(h.b);
+});
+
 test('形态1 → 形态2 的另一条路径：受致命伤也会切进替身（傀儡师分支）', () => {
   const h = put(0);
   const u = ready(h);
