@@ -1,5 +1,7 @@
 // test/content/makoto-kit.test.js — 结城理 (char_4217_makoto) 作为「自选干员」战斗。
 //
+// 形态（照官方技能描述）：形态1 <本体>（没开技能）→ 形态2 塔纳托斯（开启技能切入替身）
+//   → 形态3 俄耳甫斯（形态2 中再次开启技能，S3 专属，且形态3 不再自动开技能）。
 // 他是联动 6★ 特种/傀儡师，本 fork 用 tools/apply-makoto-buildhook.mjs 的 DSH_DIY_FORCE_PICKS
 // 把他收进自选池（data/backups.json 的 units + diy.ownedPool），kit 在 kits/ops/op-makoto.js，
 // 注册键 = 他的 charId（自选 kit 的约定；池里的棋子才按 baseId 解析）。
@@ -39,33 +41,68 @@ test('自选干员：他按槽位上场，技能来自他自己的 kit（不是�
   assert.ok(u, '他在场上');
   assert.equal(u.def.charId, MAKOTO, '身份是他的 charId');
   assert.equal(u.skill.id, 'skchr_makoto_1', '载入的是他的 S1');
-  assert.equal(u.skill.kind, 'passive', '他的技能都是"被动形态 + 主动切换"');
+  assert.equal(u.skill.kind, 'instant', '技能按官方"主动：立即切换"实现为 instant（不是常驻 passive）');
   checkInvariants(h.b);
 });
 
-test('他部署时就以<替身>形态登场（被动形态），并带着天赋 1 的替身数值', () => {
-  // 官方："被动：<替身>状态召唤俄耳甫斯/塔纳托斯… 主动：立即切换为<替身>状态作战"。
-  // 引擎把 kind:'passive' 的技能在获得/部署时即开启（lifecycle），所以他在场上是常驻替身形态。
+test('形态1：部署时是<本体>，不自动开技能（技能是 instant，按官方 spCost 攒 SP）', () => {
   const h = put(0);
   const u = ready(h);
-  assert.ok(u.trait.doll, '登场即<替身>');
-  assert.equal(u.mem.makotoDoll, 'thanatos', '默认召唤塔纳托斯');
+  assert.ok(!u.trait.doll, '登场是<本体>（官方"初始处于<本体>形态"）');
+  assert.equal(u.skill.kind, 'instant', 'kind 必须是 instant；passive 会被引擎在部署瞬间开成常驻，导致永久替身');
+  assert.equal(u.skill.active, false, '没有自动开启');
+  assert.ok(u.skill.spCost > 0, `按官方 spCost 攒 SP（实得 ${u.skill.spCost}）`);
+  assert.ok(!u.findBuff('makoto:dollStats'), '本体没有替身数值');
+  assert.equal(u.s.atk, u.base.atk, '攻击力是本体值');
+  checkInvariants(h.b);
+});
+
+test('形态2：开技能立刻切进<替身>，并挂上天赋 1 的替身数值', () => {
+  const h = put(0);
+  const u = ready(h);
+  const bodyAtk = u.s.atk;
+  assert.equal(u.skill.activate('test', { free: true }), true, '开启技能');
+  assert.ok(u.trait.doll, '切换为<替身>');
   assert.ok(u.findBuff('makoto:dollStats'), '天赋 1 的替身数值已挂上');
-  // 攻击力 +85%（天赋 1 的 atk）、生命值 +35%
-  assert.ok(Math.abs(u.s.atk - u.base.atk * 1.85) < 2, `替身攻击力 ${u.s.atk} ≈ 本体 ${u.base.atk} × 1.85`);
+  assert.ok(Math.abs(u.s.atk - bodyAtk * 1.85) < 2, `替身攻击力 ${u.s.atk} ≈ 本体 ${bodyAtk} × 1.85`);
   assert.ok(u.s.maxHp > u.base.maxHp * 1.3, `替身生命值 ${u.s.maxHp} 高于本体 ${u.base.maxHp}`);
-  // 技能是"被动"，所以没有 SP 可攒、也没有持续时长
-  assert.equal(u.skill.kind, 'passive', '三个技能都是被动形态');
   checkInvariants(h.b);
 });
 
-test('替身形态到期换回<本体>：天赋 1 的数值被清掉', () => {
+test('形态1 ← 形态2：替身 20 秒后回<本体>，天赋 1 的数值被清掉', () => {
   const h = put(0);
   const u = ready(h);
+  const bodyAtk = u.s.atk;
+  u.skill.activate('test', { free: true });
   assert.ok(u.trait.doll, '是替身');
   assert.ok(h.runUntil(() => !u.trait.doll, 26), '替身到期换回本体');
   assert.ok(!u.findBuff('makoto:dollStats'), '天赋 1 的替身数值被移除');
-  assert.ok(Math.abs(u.s.atk - u.base.atk) < 2, `攻击力回到本体 ${u.base.atk}（实得 ${u.s.atk}）`);
+  assert.ok(Math.abs(u.s.atk - bodyAtk) < 2, `攻击力回到本体 ${bodyAtk}（实得 ${u.s.atk}）`);
+  checkInvariants(h.b);
+});
+
+test('形态2 ← 形态3：S3 在塔纳托斯中再开一次技能 → 俄耳甫斯（阻挡+2、且不再自动开技能）', () => {
+  const h = put(2);
+  const u = ready(h);
+  u.skill.activate('test', { free: true });
+  assert.equal(u.mem.makotoDoll, 'thanatos', 'S3 开启技能先召唤塔纳托斯（形态2）');
+  assert.equal(u.mem.makotoPhase, 2, 'phase=2');
+  assert.equal(u.skill.activate('test', { free: true }), true, '塔纳托斯在场时再开一次');
+  assert.equal(u.mem.makotoDoll, 'orpheus', '改为召唤俄耳甫斯（形态3）');
+  assert.equal(u.mem.makotoPhase, 3, 'phase=3');
+  assert.ok(u.findBuff('makoto:blockUp'), '阻挡数 +2 的 buff');
+  assert.equal(u.skill.rule, 'NEVER', '形态3 不再自动开启技能（官方：靠"开启技能或受到致命伤"切换）');
+  checkInvariants(h.b);
+});
+
+test('形态1 → 形态2 的另一条路径：受致命伤也会切进替身（傀儡师分支）', () => {
+  const h = put(0);
+  const u = ready(h);
+  assert.ok(!u.trait.doll, '先是本体');
+  // 直接触发引擎的致命伤钩子：傀儡师分支应当接管并切替身，而不是让他撤退
+  h.b.emit?.('fatal', { unit: u, prevented: false });
+  assert.ok(u.alive, '没有撤退');
+  assert.ok(u.trait.doll, '切换为<替身>（血条空了进替身）');
   checkInvariants(h.b);
 });
 
@@ -76,6 +113,8 @@ test('S2 塔纳托斯：一次攻击对至多 4 名敌人造成 220% 攻击力�
   const foes = [[10, 4], [11, 4], [9, 4]].map(([r, c]) => h.spawn('enemy_dummy', { pos: [r, c] })).filter(Boolean);
   assert.equal(foes.length, 3, '3 个假人在范围内');
   h.b.rng = () => 0.99;                       // 不触发恐惧，先看纯伤害
+  assert.equal(u.skill.activate('test', { free: true }), true, '开技能 → 塔纳托斯（形态2）');
+  assert.ok(u.trait.doll, '已是替身');
   const n0 = h.hooksOf('damaged').length;
   h.b.forceAttack(u, [foes[0]], {});
   const dmg = since(h, 'damaged', n0).filter((c) => c.source === u);
@@ -100,6 +139,7 @@ test('S2 塔纳托斯：35% 概率恐惧；恐惧中且生命值低于 250% 攻�
   const u = ready(h);
   const foe = h.spawn('enemy_dummy', { pos: [10, 4] });
   h.b.rng = () => 0;                          // 必定触发恐惧
+  u.skill.activate('test', { free: true });   // 开技能 → 塔纳托斯（形态2）
   const dollAtk = u.s.atk;
   h.b.forceAttack(u, [foe], {});
   const feared = h.hooksOf('statusApplied').filter((c) => c.target === foe && c.status === 'fear');
@@ -122,6 +162,7 @@ test('S1 俄耳甫斯：范围内没有低血友方时按攻击结算（有低�
   const u = ready(h);
   const foe = h.spawn('enemy_dummy', { pos: [10, 4] });
   h.b.rng = () => 0.99;
+  assert.equal(u.skill.activate('test', { free: true }), true, '开技能 → 俄耳甫斯（形态2）');
   const n0 = h.hooksOf('damaged').length;
   h.b.forceAttack(u, [foe], {});
   const dmg = since(h, 'damaged', n0).filter((c) => c.source === u && c.target === foe);
@@ -149,7 +190,8 @@ test('天赋 1：由<本体>切进<替身>时，<替身>攻击范围内的敌人
   // 假人必须先在场，才能被"部署时切进替身"的停顿扫到（他也是部署即替身）
   const foe = h.spawn('enemy_dummy', { pos: [10, 4] });
   const u = ready(h);
-  assert.ok(u.trait.doll, '部署即替身');
+  assert.ok(!u.trait.doll, '先是本体');
+  u.skill.activate('test', { free: true });   // 切进替身的瞬间才停顿
   const slow = h.hooksOf('statusApplied').filter((c) => c.target === foe && c.status === 'sluggish');
   assert.equal(slow.length, 1, '挂在<替身>攻击范围内的敌人身上');
   assert.ok(Math.abs(slow[0].duration - 8) < 0.01, `停顿 8 秒（实得 ${slow[0].duration}）`);
@@ -160,6 +202,7 @@ test('天赋 2 S.E.E.S.队长：<替身>结束后对周围敌人造成 450% 攻�
   const h = put(0);
   const u = ready(h);
   const foe = h.spawn('enemy_dummy', { pos: [10, 4] });
+  u.skill.activate('test', { free: true });   // 进替身，之后到期结束 → 总攻击
   const dollAtk = u.s.atk;
   assert.ok(h.runUntil(() => h.hooksOf('damaged').some((c) => c.dmg?.tags?.includes('makoto:allout')), 26), '总攻击结算了');
   const all = h.hooksOf('damaged').filter((c) => c.dmg?.tags?.includes('makoto:allout'));

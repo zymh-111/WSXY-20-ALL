@@ -197,41 +197,73 @@ function makoto(bb, raw, def) {
     }, { owner: unit });
   };
 
-  // ── 技能 spec：三者都是"被动形态 + 主动切换" ────────────────────────────────────────────────
+  // ── 技能 spec：三者都是"本体常态 + 开技能切替身" ──────────────────────────────────────────────
+  //
+  // 形态由**技能触发方式**决定（不是技能序号），共三态：
+  //   形态1 <本体>        —— 没开技能时；官方"初始处于本体形态"
+  //   形态2 塔纳托斯      —— **开启技能**（或受致命伤）切入替身时的形态：多目标 / 恐惧 / 斩杀
+  //   形态3 俄耳甫斯      —— 形态2 中**再次开启技能**（S3）切换后的形态：阻挡+2 / 闪避 / 每秒治疗
+  // S1 开技能直接是俄耳甫斯（它的替身就是俄耳甫斯），S2 开技能直接是塔纳托斯；
+  // S3 走完整的三态（塔纳托斯 → 俄耳甫斯）。
+  // 形态3 **不自动开技能**（官方此时靠"开启技能或受到致命伤"切换），所以进形态3时把触发规则改成
+  // NEVER，回到<本体>时恢复 SKILL_RANGE —— 见 removeTalentMods。
   const switchToDoll = (battle, unit) => {
-    // "主动：立即切换为<替身>状态作战"。S3 时：塔纳托斯在场 → 改为召唤俄耳甫斯
-    if (unit.trait?.doll) {
-      // 已经是替身：S3 在塔纳托斯形态下再开一次 → 换俄耳甫斯（P1 → P2）
-      if (unit.skill?.id === S3 && unit.mem.makotoDoll === 'thanatos') {
-        unit.mem.makotoDoll = 'orpheus';
-        battle.addBuff(unit, { key: 'makoto:blockUp', duration: (unit.profile.dollDuration ?? 20) + DOLL_SWITCH, refresh: 'replace', mods: { blockCnt: num(s3['attack@block_cnt'], 0) }, source: unit, tags: ['skill'] });
-        battle.fx('buff', { x: unit.x, y: unit.y, id: unit.id, skill: 'makotoP2' });
-      }
+    const cur = curId();
+    const phase = unit.mem.makotoPhase ?? 0;
+    // 形态3 → 形态2：俄耳甫斯在场时再开一次技能，切回塔纳托斯
+    if (unit.trait?.doll && phase === 3) {
+      unit.mem.makotoPhase = 2;
+      unit.mem.makotoDoll = 'thanatos';
+      unit.skill?.setTrigger?.('SKILL_RANGE');   // 形态2 恢复自动开启
+      battle.fx('buff', { x: unit.x, y: unit.y, id: unit.id, skill: 'makotoP2toP1' });
       return;
     }
-    unit.mem.makotoDoll = 'thanatos';   // 默认召唤塔纳托斯
+    // 形态2 → 形态3：塔纳托斯在场时开技能，切到俄耳甫斯（S3 专属）
+    if (unit.trait?.doll && phase === 2) {
+      if (cur !== S3) return;                    // S1/S2 没有第三形态
+      unit.mem.makotoPhase = 3;
+      unit.mem.makotoDoll = 'orpheus';
+      unit.skill?.setTrigger?.('NEVER');         // 形态3 不自动开技能
+      battle.addBuff(unit, {
+        key: 'makoto:blockUp', duration: (unit.profile.dollDuration ?? 20) + DOLL_SWITCH, refresh: 'replace',
+        mods: { blockCnt: num(s3['attack@block_cnt'], 0) }, source: unit, tags: ['skill'],
+      });
+      battle.fx('buff', { x: unit.x, y: unit.y, id: unit.id, skill: 'makotoP2' });
+      return;
+    }
+    if (unit.trait?.doll) return;
+    // 形态1 → 形态2（或 S1 直达俄耳甫斯）：开技能切入替身
+    unit.mem.makotoPhase = cur === S1 ? 3 : 2;
+    unit.mem.makotoDoll = cur === S1 ? 'orpheus' : 'thanatos';
     battle.emit('dollSwitch', { unit, reason: 'skill', done: false });
   };
 
   return {
     skills: {
-      // 三个技能都是"被动（替身形态行为）+ 主动（立即切换）"，所以 spec 形状相同，只有切换后的形态不同
-      [S1]: { kind: 'passive', onStart({ battle, unit }) { switchToDoll(battle, unit); } },
-      [S2]: { kind: 'passive', onStart({ battle, unit }) { switchToDoll(battle, unit); } },
-      [S3]: { kind: 'passive', onStart({ battle, unit }) { switchToDoll(battle, unit); } },
+      // 技能结构照官方描述：
+      //   "被动：<替身>状态召唤塔纳托斯/俄耳甫斯…（替身形态下的能力）"
+      //   "主动：立即切换为<替身>状态作战"
+      // ⚠️ 关键是 kind 必须是 'instant' 而**不能是 'passive'**：'passive' 会被引擎在部署瞬间开成"常驻"
+      //（this.active=true、spCost=0），于是根本没有"开技能"这个动作，形态2/形态3 无从发生 ——
+      // 实测表现为一上场就永久替身。'instant' 才对应官方"开启技能瞬间切换"。
+      // 触发规则保持官方数据的 SKILL_RANGE（技能范围内存在敌人时开启，本模式常态自动开启）；
+      // 形态3 由 kit 用 setTrigger('NEVER') 关掉自动开启（见 switchToDoll）。
+      [S1]: { kind: 'instant', onStart({ battle, unit }) { switchToDoll(battle, unit); } },
+      [S2]: { kind: 'instant', onStart({ battle, unit }) { switchToDoll(battle, unit); } },
+      [S3]: { kind: 'instant', onStart({ battle, unit }) { switchToDoll(battle, unit); } },
     },
     talents: [
       { install: installTalent1 },
       { install(battle, unit) { installOrpheusAura(battle, unit); } },
     ],
     install(battle, unit) {
-      // 替身形态的数值与攻击行为：进入替身时挂上，离开时清掉
+      // 只在**切进替身**时挂替身数值与攻击接线（开场是<本体>，什么都没有）；
+      // 受致命伤由引擎的傀儡师分支自己触发 dollSwap，所以这条覆盖"开技能"和"血条空了"两条路径。
       battle.on('dollSwap', ({ unit: u, form }) => {
         if (u !== unit) return;
         if (form === 'doll') { applyTalentMods(battle, unit); installDollAttack(battle, unit); }
         else removeTalentMods(battle, unit);
       }, { owner: unit, priority: -10 });
-      if (inDoll(unit)) { applyTalentMods(battle, unit); installDollAttack(battle, unit); }
     },
   };
 
@@ -253,6 +285,9 @@ function makoto(bb, raw, def) {
     battle.removeBuff(unit, 'makoto:blockUp');
     battle.removeBuff(unit, 'makoto:orpheusDodge');
     unit.mem.makotoDoll = null;
+    unit.mem.makotoPhase = 0;
+    // 替身结束、回到<本体>（形态1）后恢复官方的自动开启规则（形态3 曾把它改成 NEVER）
+    if (unit.skill?.id === S3) unit.skill.setTrigger?.('SKILL_RANGE');
   }
   function installDollAttack(battle, unit) {
     // 引擎的一次攻击结束后按形态补算（多目标 / 恐惧 / 斩杀 / 治疗）—— 钩子名是 'attack'，ctx.attacker 是出手者
