@@ -390,6 +390,8 @@ async function boot() {
     setTimeout(() => splash.remove(), 300);
   }
   globalThis.__SP__ = { store, net, data, version: 1 };
+  // [CUSTOM DEV_BACKDOOR] 测试后门面板（仅本机/内网 + solo 单人房）：控制台 __dev.ensure() 打开，或 __SP__.dev.show()
+  import('./dev.js').then((m) => { globalThis.__SP__.dev = m.default; }).catch((e) => console.warn('[dev] panel failed to load', e));
   // A page keeps the modules it imported at load time for its whole lifetime, so a deploy cannot reach an open tab
   // (ui/buildGuard.js): watch `/healthz.build`. Outside a match the page reloads itself; during a match the guard says
   // so instead (the connection banner offers 刷新页面) and reloads once the match — settlement screen included — is over,

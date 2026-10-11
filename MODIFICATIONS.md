@@ -24,6 +24,8 @@
 
 | 2026-10-11 | `tools/apply-makoto-buildhook.mjs`（新增）、`tools/deploy-makoto.mjs`（新增）、`tools/apply-makoto-patch.mjs`（新增）、`tools/apply-makoto-assets.mjs`（新增）、`tools/apply-makoto-spine.mjs`（新增）、`tools/build-data.mjs`、`data/backups.json`、`data/assets.json` | **把联动干员「结城理」(char_4217_makoto) 收录进「自选干员」池，阵营按其隐藏势力定为「拉特兰」**。他是官方 6★ 特种/傀儡师（P3 联动，`teamId=sees`），数据与素材齐全，但上游因**版权**把他连同其他联动 6★ 一起排除在自选池外（`buildBackups` 的 `DIY_EXCLUDED_TEAMS`，原作者 2026-10-05 的决定）。本 fork 按需求放开他一个人：给 build-data 加了两个**默认关闭**的环境变量开关 —— `DSH_DIY_FORCE_PICKS`（无视联动排除进池）与 `DSH_DIY_FORCE_BONDS`（覆盖自选干员的盟约，把他指定到 `emptyShip` 协防干员，而不是其隐藏势力拉特兰对应的拉特兰盟约）、导出 `buildBackups`/`buildChess`/`loadContext` 供工具复用同一套口径、`main()` 加直接执行守卫。并新增素材工具（头像/精英头像/两张立绘/三张技能图标/spine 三件套，含 `data/assets.json` 的 chars+skills+spine 登记）。不设这两个环境变量时构建结果与上游**逐字节一致**。技能与天赋的实现见后续提交。 |
 
+| 2026-10-11 | `server/match/dev.js`（新增）、`server/net.js`、`server/lobby.js`、`shared/protocol.js`、`public/js/dev.js`（新增）、`public/js/main.js`、`tools/apply-dev-backdoor.mjs`、`tools/apply-dev-client.mjs`（均新增） | **新增测试后门（免抽卡调试通道）**：服务端接受 `{ t:'dev', op }`，用于不刷就验证干员 kit（尤其自选干员结城理）。op：`state`（读自己的资金/商店/盟约层数/自选槽）、`funds n`、`level n`（走游戏自己的升级价与上限，照常发每级奖励）、`refresh`、`layers bondId n`、`layersAll n`。**三重门禁**：①来源必须是本机/内网（`net.js` 的 `clientAddress` → `isLocalIp`，随消息以 `ctx.isLocal` 传入，缺省按非本机处理）②房间必须是 solo 单人房 ③只能作用于调用者自己的座位；任一不满足回 `BAD_TARGET` 且不回显内部信息。前端在 `public/js/dev.js`（控制台 `__dev.ensure()` 打开面板，或 `__SP__.dev`），协议已登记 `dev`。测试：`test/match/dev-backdoor.test.js` 10/10（门禁全部覆盖）、`test/client/dev-panel.test.js` 4/4。撤销：`revert-dev-backdoor.mjs` / `revert-dev-client.mjs`。 |
+
 ## 与上游的关系
 
 - 上游原始项目：`sganggs/Stronghold-Protocol`（作者 sganggs）

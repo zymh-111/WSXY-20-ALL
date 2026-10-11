@@ -415,6 +415,9 @@ export const C2S = {
   // room.closed { reason: 'kicked' }). room.leave / g.leave leave a spectator seat like a player seat.
   'room.spectate': { code: (v) => isStr(v, ROOM_CODE_LEN + 2) && /^[A-Za-z0-9]+$/.test(v) },
   'room.removeSpectator': { playerId: isId },
+  // [CUSTOM DEV_BACKDOOR] 测试后门：{ t:'dev', op, ...参数 } —— 仅本机/内网 + solo 单人房，
+  // 服务端见 server/match/dev.js。字段校验只判类型，真正的门禁在服务端。
+  dev: { op: (v) => typeof v === 'string' && v.length > 0 && v.length <= 32, n: (v) => v == null || Number.isSafeInteger(v), bondId: (v) => v == null || (typeof v === 'string' && v.length <= 64), $optional: ['n', 'bondId'] },
 
   // match
   'g.infoReady': {},
