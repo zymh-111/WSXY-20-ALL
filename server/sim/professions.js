@@ -263,7 +263,9 @@ const installDollkeeper = (battle, unit) => {
     unit.markDirty();
     unit.hp = unit.s.maxHp;
     // `dur`: until the switch back (the client times the 替身's closing clip with it)
-    battle.fx('substitute', at({ form: 'doll', dur }));
+    // [CUSTOM MAKOTO_FORM_CTX] 替身形态一并下发（见 tools/apply-makoto-formctx.mjs）：结城理的替身剪辑按形态分组，
+    // 客户端自己猜（skillIndex）会在 fx 早到时退化成 S1 的俄耳甫斯，闪一帧。有值时才带这个字段。
+    battle.fx('substitute', at({ form: 'doll', dur, ...(unit.mem?.makotoDoll ? { makotoDoll: unit.mem.makotoDoll } : null) }));
     // `dollSwap` { unit, form }: a switch started — to the 替身 ('doll') or back to the 本体 (null); not fired when she is
     // knocked out as the 替身 (不屈 rolls on both switches: PRTS 盟约记录 "切换<替身>与<本体>时")
     if (battle.hasHook('dollSwap')) battle.emit('dollSwap', { unit, form: 'doll' });

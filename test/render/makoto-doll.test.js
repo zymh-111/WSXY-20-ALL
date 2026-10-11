@@ -89,11 +89,27 @@ test('_formSpec 按当前技能选替身剪辑：S1 / S2 / S3 各走自己那套
   }
 });
 
-test('切换进替身时先播 change 剪辑（Doll_Skill_1_SwitchIn）', async () => {
+test('替身剪辑按**形态**选（不靠 skillIndex 猜）—— 修掉"先闪一帧俄耳甫斯"', () => {
+  const spec = FORMS[MAKOTO].doll;
+  const r = spec.roles;
+  // 形态 key 由引擎随切换 fx 下发；拿到 key 时结果必须与技能索引无关地正确
+  assert.equal(r({ doll: 'thanatos', skill: 2 }).idle, 'Doll_Skill_3_P1_Idle', '形态2（S3）= 塔纳托斯 P1');
+  assert.equal(r({ doll: 'thanatos', skill: 1 }).idle, 'Doll_Skill_2_Loop', '形态2（S2）= 塔纳托斯 _2_');
+  assert.equal(r({ doll: 'orpheus', skill: 2 }).idle, 'Doll_Skill_3_P2_Loop', '形态3（S3）= 俄耳甫斯 P2');
+  assert.equal(r({ doll: 'orpheus', skill: 0 }).idle, 'Doll_Skill_1_Idle', 'S1 的替身 = 俄耳甫斯 _1_（会攻击）');
+  assert.ok(spec.roles({ doll: 'orpheus', skill: 0 }).attack, 'S1 的替身有攻击剪辑');
+  // 关键回归：没有形态 key 时才退回 skillIndex —— 早先 skillIndex 未就绪会退化成 S1 的俄耳甫斯
+  assert.equal(r({ skill: 2 }).idle, 'Doll_Skill_3_P1_Idle', '拿不到形态时按 skillIndex 兜底');
+  assert.equal(r(2).idle, 'Doll_Skill_3_P1_Idle', '直接传数字也认（兼容旧调用）');
+});
+
+test('切换进替身时先播 change 剪辑', async () => {
   const v = await op({ skillIndex: 0 });
   v.setForm('doll', { dur: 20 });
   v.update(1 / 60, cam(), 1 / 60);
-  assert.equal(clip(v), 'Doll_Skill_1_SwitchIn', '先播切换动画');
+  // 三个形态共用同一个面具部件（atlas 只有 B_PersonaOrps_*），差别只在剪辑，
+  // 所以 change 统一用 P1 的 SwitchIn；形态本身由 roles 按 key 选。
+  assert.equal(clip(v), 'Doll_Skill_3_P1_SwitchIn', '先播切换动画');
 });
 
 test('真骨架对照：上面引用的剪辑名都在他的骨架里（素材就位时才跑）', (t) => {

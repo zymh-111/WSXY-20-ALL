@@ -331,15 +331,44 @@ export const FORMS = Object.freeze({
   // of the skill index (UnitView._formSpec). The 本体 comes back on SwitchOut; a 替身 knocked out lies on its own Die.
   char_4217_makoto: Object.freeze({
     doll: Object.freeze({
-      change: 'Doll_Skill_1_SwitchIn', leave: 'SwitchOut',
-      roles: (skillIndex) => {
-        if (skillIndex === 1) {
-          return Object.freeze({ idle: 'Doll_Skill_2_Loop', deploy: 'Doll_Skill_2_Loop', die: 'Doll_Skill_2_Die',
-            stun: 'Doll_Skill_2_Stun', attack: null, attackDown: null, skill: null });
+      leave: 'SwitchOut',
+      change: 'Doll_Skill_3_P1_SwitchIn',
+      /**
+       * 替身剪辑按**形态**选，不按 skillIndex 猜：fx 到达时 skillIndex 可能还没就绪，
+       * 用它会在形态2/3 闪一帧 S1 的俄耳甫斯（实测 roles(undefined) → Doll_Skill_1_Idle）。
+       * 形态 key 由引擎随切换 fx 下发（professions.js substitute fx 的 makotoDoll 字段，
+       * 见 tools/apply-makoto-formctx.mjs）；拿不到才退回 skillIndex。
+       * 骨架里塔纳托斯与俄耳甫斯**共用同一个面具部件**（atlas 只有 B_PersonaOrps_*），
+       * 差别只在剪辑，所以切换剪辑统一用 P1 的 SwitchIn。
+       * @param {{doll?: string|null, skill?: number|null}|number|null} ctx
+       */
+      roles: (ctx) => {
+        const doll = typeof ctx === 'string' ? ctx : (ctx && ctx.doll != null ? ctx.doll : null);
+        const skill = typeof ctx === 'number' ? ctx : (ctx && ctx.skill != null ? ctx.skill : null);
+        // 塔纳托斯（形态2）：S3（skill 2）用 P1 那套，S2（skill 1）用 _2_ 那套
+        if (doll === 'thanatos') {
+          return Object.freeze(skill === 2
+            ? { idle: 'Doll_Skill_3_P1_Idle', deploy: 'Doll_Skill_3_P1_Idle', die: 'Doll_Skill_3_P2_Die',
+              stun: 'Doll_Skill_3_P1_Stun', attack: null, attackDown: null, skill: null }
+            : { idle: 'Doll_Skill_2_Loop', deploy: 'Doll_Skill_2_Loop', die: 'Doll_Skill_2_Die',
+              stun: 'Doll_Skill_2_Stun', attack: null, attackDown: null, skill: null });
         }
-        if (skillIndex === 2) {
+        // 俄耳甫斯：S1 的替身本体（会攻击）用 _1_ 那套；S3 的形态3 用 P2 那套
+        if (doll === 'orpheus') {
+          return Object.freeze(skill === 0
+            ? { idle: 'Doll_Skill_1_Idle', deploy: 'Doll_Skill_1_Idle', die: 'Doll_Skill_1_Die', stun: 'Doll_Skill_1_Stun',
+              attack: Object.freeze({ begin: null, loop: 'Doll_Skill_1_Attack', end: null }), attackDown: null, skill: null }
+            : { idle: 'Doll_Skill_3_P2_Loop', deploy: 'Doll_Skill_3_P2_Loop', die: 'Doll_Skill_3_P2_Die',
+              stun: 'Doll_Skill_3_P2_Stun', attack: null, attackDown: null, skill: null });
+        }
+        // 拿不到形态（旧路径）→ 按 skillIndex 兜底；都没有才用 S1 那套
+        if (skill === 2) {
           return Object.freeze({ idle: 'Doll_Skill_3_P1_Idle', deploy: 'Doll_Skill_3_P1_Idle', die: 'Doll_Skill_3_P2_Die',
             stun: 'Doll_Skill_3_P1_Stun', attack: null, attackDown: null, skill: null });
+        }
+        if (skill === 1) {
+          return Object.freeze({ idle: 'Doll_Skill_2_Loop', deploy: 'Doll_Skill_2_Loop', die: 'Doll_Skill_2_Die',
+            stun: 'Doll_Skill_2_Stun', attack: null, attackDown: null, skill: null });
         }
         return Object.freeze({ idle: 'Doll_Skill_1_Idle', deploy: 'Doll_Skill_1_Idle', die: 'Doll_Skill_1_Die',
           stun: 'Doll_Skill_1_Stun',
@@ -706,11 +735,13 @@ export class UnitView {
     });
   }
 
-  _formSpec() {
+  _formSpec(ctx = null) {
     const f = this.form ? FORMS[this.info.spine || this.info.defId]?.[this.form] || null : null;
-    // [CUSTOM MAKOTO_DOLL_FORMS] a form whose `roles` is a function picks its clip set by the unit's skill index
-    // (结城理's skeleton has one 替身 set per skill: Doll_Skill_1_* / Doll_Skill_2_* / Doll_Skill_3_P1_*+P2_*).
-    if (f && typeof f.roles === 'function') return { ...f, roles: f.roles(this.skillIndex) };
+    // [CUSTOM MAKOTO_DOLL_FORMS] a form whose `roles` is a function picks its clip set from the form context
+    // (结城理's skeleton has one 替身 set per form: Doll_Skill_1_* / _2_* / _3_P1_*+P2_*).
+    // ctx.doll (from the switching fx) wins over this.skillIndex — the fx can arrive before the loadout's skill
+    // index is known, and guessing there flashed the wrong 替身 for one frame.
+    if (f && typeof f.roles === 'function') return { ...f, roles: f.roles(ctx && ctx.doll != null ? ctx.doll : this.skillIndex) };
     return f;
   }
 
@@ -729,7 +760,8 @@ export class UnitView {
     const prev = this._formSpec();
     this.form = k;
     this.info.form = k;
-    const f = this._formSpec();
+    // [CUSTOM MAKOTO_FORM_CTX] the switching fx may carry the form context (makotoDoll = which 替身) — see _formSpec.
+    const f = this._formSpec(fx && typeof fx === 'object' ? { doll: fx.makotoDoll ?? null } : null);
     if (!this.actor) return;
     const dur = fx && Number(fx.dur);
     let next = f && f.next ? FORMS[this.info.spine || this.info.defId]?.[f.next]?.roles || null : null;
