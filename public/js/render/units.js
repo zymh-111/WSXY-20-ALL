@@ -327,6 +327,26 @@ export const FORMS = Object.freeze({
   char_4016_kazema: Object.freeze({
     doll: Object.freeze({ change: 'Start_B', leave: 'Start', roles: dollRoles('Idle_B', 'Die_B', 'Attack_B') }),
   }),
+  // [CUSTOM MAKOTO_DOLL_FORMS] 结城理 (char_4217_makoto): one 替身 clip set per skill (Doll_Skill_<n>_*), so `roles` is a function
+  // of the skill index (UnitView._formSpec). The 本体 comes back on SwitchOut; a 替身 knocked out lies on its own Die.
+  char_4217_makoto: Object.freeze({
+    doll: Object.freeze({
+      change: 'Doll_Skill_1_SwitchIn', leave: 'SwitchOut',
+      roles: (skillIndex) => {
+        if (skillIndex === 1) {
+          return Object.freeze({ idle: 'Doll_Skill_2_Loop', deploy: 'Doll_Skill_2_Loop', die: 'Doll_Skill_2_Die',
+            stun: 'Doll_Skill_2_Stun', attack: null, attackDown: null, skill: null });
+        }
+        if (skillIndex === 2) {
+          return Object.freeze({ idle: 'Doll_Skill_3_P1_Idle', deploy: 'Doll_Skill_3_P1_Idle', die: 'Doll_Skill_3_P2_Die',
+            stun: 'Doll_Skill_3_P1_Stun', attack: null, attackDown: null, skill: null });
+        }
+        return Object.freeze({ idle: 'Doll_Skill_1_Idle', deploy: 'Doll_Skill_1_Idle', die: 'Doll_Skill_1_Die',
+          stun: 'Doll_Skill_1_Stun',
+          attack: Object.freeze({ begin: null, loop: 'Doll_Skill_1_Attack', end: null }), attackDown: null, skill: null });
+      },
+    }),
+  }),
   enemy_1040_bombd: Object.freeze({
     bombed: Object.freeze({
       roles: Object.freeze({
@@ -687,7 +707,11 @@ export class UnitView {
   }
 
   _formSpec() {
-    return this.form ? FORMS[this.info.spine || this.info.defId]?.[this.form] || null : null;
+    const f = this.form ? FORMS[this.info.spine || this.info.defId]?.[this.form] || null : null;
+    // [CUSTOM MAKOTO_DOLL_FORMS] a form whose `roles` is a function picks its clip set by the unit's skill index
+    // (结城理's skeleton has one 替身 set per skill: Doll_Skill_1_* / Doll_Skill_2_* / Doll_Skill_3_P1_*+P2_*).
+    if (f && typeof f.roles === 'function') return { ...f, roles: f.roles(this.skillIndex) };
+    return f;
   }
 
   /**
