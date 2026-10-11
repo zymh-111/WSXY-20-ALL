@@ -64,7 +64,7 @@ export const KIT_FILES = Object.freeze([
     'chess_char_6_08-reed2.js', 'chess_char_6_09-cello.js', 'chess_char_6_10-nymph.js', 'chess_char_6_11-mlyss.js',
     'chess_char_6_12-rosmon.js', 'chess_char_6_13-angel2.js', 'chess_char_6_14-lumen.js', 'chess_char_6_15-qiubai.js',
     'chess_char_6_16-halo2.js', 'chess_char_6_17-nearl2.js', 'chess_char_6_18-whitw2.js', 'chess_char_6_19-blkkgt.js',
-    'chess_char_6_20-agoat2.js'],
+    'chess_char_6_20-agoat2.js',     'chess_char_6_21-clemnt.js'],
 ].map((group) => Object.freeze(group)));
 
 /**
