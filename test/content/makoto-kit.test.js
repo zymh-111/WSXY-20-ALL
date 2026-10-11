@@ -185,6 +185,37 @@ test('S2 塔纳托斯：35% 概率恐惧；恐惧中且生命值低于 250% 攻�
   checkInvariants(h.b);
 });
 
+test('S2 斩杀是条件式的：血量远高于阈值时不斩（不是"有几率就斩"）', () => {
+  // 官方："范围内恐惧中的敌人若生命值低于结城理攻击力的 attack@kill_atk_scale 则立刻倒下"
+  // → 两个必要条件：① 处于恐惧中 ② 生命值低于 攻击力 × 250%(rank7)
+  const h = put(1);
+  const u = ready(h);
+  const foe = h.spawn('enemy_dummy', { pos: [10, 4] });
+  h.b.rng = () => 0;                          // 必定上恐惧
+  u.skill.activate('test', { free: true });   // → 塔纳托斯（形态2）
+  const atk = u.s.atk;
+  const thr = atk * 2.5;                      // 精锐 rank7 的斩杀阈值
+  h.b.forceAttack(u, [foe], {});              // 上恐惧
+  assert.ok(foe.s.flags.fear, '处于恐惧中');
+  // 把血量放到远高于阈值：本次攻击的伤害（约 0.5×ATK/目标）不可能把它打进阈值内
+  foe.hp = thr * 10;
+  const n0 = h.hooksOf('damaged').length;
+  h.b.forceAttack(u, [foe], {});
+  const exec = since(h, 'damaged', n0).filter((c) => c.dmg?.tags?.includes('makoto:execute'));
+  assert.equal(exec.length, 0, `血量 ${Math.round(thr * 10)} 远高于阈值 ${Math.round(thr)} → 不斩杀`);
+  assert.ok(foe.alive, '目标存活');
+  // 压进阈值内 → 下一次攻击的结算里出现斩杀段（恐惧只有 1.5 秒，先确认还在，不在就补上）
+  foe.hp = thr * 0.5;
+  if (!foe.s.flags.fear) h.b.applyStatus(foe, 'fear', { duration: 1.5, source: u });
+  assert.ok(foe.s.flags.fear, '目标仍在恐惧中（必要条件）');
+  const n1 = h.hooksOf('damaged').length;
+  h.b.forceAttack(u, [foe], {});
+  const exec2 = since(h, 'damaged', n1).filter((c) => c.dmg?.tags?.includes('makoto:execute'));
+  assert.ok(exec2.length >= 1, '血量低于阈值 → 立刻倒下');
+  assert.equal(foe.alive, false, '目标倒下');
+  checkInvariants(h.b);
+});
+
 test('S1 俄耳甫斯：范围内没有低血友方时按攻击结算（有低于 50% 的友方才改为治疗）', () => {
   const h = put(0);
   const u = ready(h);

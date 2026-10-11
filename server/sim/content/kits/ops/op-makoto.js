@@ -151,24 +151,34 @@ function makoto(bb, raw, def) {
 
     const maxTargets = isOrpheus ? 1 : Math.max(1, num(src['attack@max_target'], 1));
     const targets = enemiesInRange(battle, unit).slice(0, maxTargets);
+
+    // 斩杀判定读**攻击前**的血量（官方"攻击的同时，范围内恐惧中的敌人若生命值低于阈值则立刻倒下"）。
+    // 钩子是在引擎的普通攻击伤害之后跑的，所以若在这里读 e.hp，血量已被打掉一段，
+    // 会出现"该斩的没斩、要靠普攻补刀"的偏差。所以先按当前血量记下该倒下的目标。
+    const executed = new Set();
+    if (cur === S2) {
+      const k = num(s2['attack@kill_atk_scale'], 0);
+      const dmg = num(s2['attack@kill_damage'], 9999999);
+      if (k > 0) for (const e of enemiesInRange(battle, unit)) {
+        if (!e.alive || !feared(e) || executed.has(e)) continue;
+        if (e.hp < atk * k) {
+          battle.dealDamage(unit, e, { amount: dmg, type: 'arts', isSkill: true, canDodge: false, tags: ['skill', 'makoto:execute'] });
+          executed.add(e);
+        }
+      }
+    }
+
     const bonus = atk * Math.max(0, scale - 1);
     if (bonus > 0) for (const e of targets) {
+      if (executed.has(e) || !e.alive) continue;   // 已被斩杀的目标不再补伤害
       battle.dealDamage(unit, e, { amount: bonus, type: 'arts', isAttack: true, tags: ['skill', 'makoto:doll'] });
     }
 
-    // 恐惧与斩杀**只有 S2（塔纳托斯的囚锁）有**（官方：S3 是"弱点伤害"，没有这两项）
+    // 恐惧只有 S2（塔纳托斯的囚锁）有（官方：S3 是"弱点伤害"，没有恐惧与斩杀）
     if (cur === S2) {
       const p = num(s2['attack@prob'], 0);
       if (p > 0) for (const e of targets) {
         if (e.alive && battle.rng() < p) battle.applyStatus(e, 'fear', { duration: num(s2['attack@fear'], 0), source: unit });
-      }
-      const k = num(s2['attack@kill_atk_scale'], 0);
-      const dmg = num(s2['attack@kill_damage'], 9999999);
-      if (k > 0) for (const e of enemiesInRange(battle, unit)) {
-        if (!e.alive || !feared(e)) continue;
-        if (e.hp < atk * k) {
-          battle.dealDamage(unit, e, { amount: dmg, type: 'arts', isSkill: true, canDodge: false, tags: ['skill', 'makoto:execute'] });
-        }
       }
     }
   };
