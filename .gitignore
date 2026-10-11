@@ -1,9 +1,33 @@
+# --- 补丁备份文件（原有，保留）---
 *.bak
 *.bak-*
 *.orig
 *.rej
 
-# --- patch backup files ---
-*.bak
-*.bak-*
-*.orig
+# --- 依赖 ---
+node_modules/
+.cache/
+.venv*/
+venv/
+__pycache__/
+*.pyc
+
+# --- 素材（不进仓库；NOTICE.md 要求「本仓库不包含素材」）---
+public/assets/
+public/fonts/
+public/vendor/
+data/local-assets.json
+
+# --- 运行期数据 ---
+runtime/
+logs/
+*.log
+.env
+.env.*
+
+# --- 临时与编辑器 ---
+.DS_Store
+Thumbs.db
+*.swp
+.idea/
+.vscode/
