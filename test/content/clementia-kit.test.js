@@ -183,9 +183,13 @@ test('她登记在阿戈尔盟约的成员名单里（面板成员列表与计�
   const list = bonds.bonds ?? bonds;
   const egir = list.egirShip;
   assert.ok(egir, '阿戈尔（egirShip）盟约存在');
-  assert.ok(egir.members.includes(CHESS_E), `bond.members 含她（现有 ${egir.members.length} 人）`);
-  assert.ok(egir.visibleMembers.includes(CHESS_E), 'visibleMembers（面板用的那份）含她');
+  // 两个名单存的都是本体 id（bondInfoDict.chessIdList 只收本体）
+  const base = CHESS_E.replace(/_b$/, '_a');
+  assert.ok(egir.members.includes(base), `bond.members 含她（现有 ${egir.members.length} 人）`);
+  assert.ok(egir.visibleMembers.includes(base), 'visibleMembers（面板用的那份）含她');
   const chess = JSON.parse(readFileSync(new URL('../../data/chess.json', import.meta.url), 'utf8'));
-  const rec = (chess.chess ?? chess)[CHESS_E];
+  const rec = (chess.chess ?? chess)[base];
   assert.ok(rec.bonds.includes('egirShip'), '她的棋子记录仍属于该盟约');
+  const golden = (chess.chess ?? chess)[CHESS_E];
+  assert.ok(golden.bonds.includes('egirShip'), '精锐形态同样属于该盟约');
 });
