@@ -45,6 +45,18 @@ const up = (u) => !!u && u.alive && u.deployed;
 const feared = (u) => !!(u && (u.s?.flags?.fear || u.hasFlag?.('fear')));
 
 /**
+ * <替身>的攻击范围：官方 range_table 的 `x-1`，**13 格菱形**
+ * （中心 + 上下左右各 2 格 + 四个斜角各 1 格），与 PRTS「<替身>的攻击范围」图示一致。
+ * 本体是 `1-1`（只有 自己 + 身前 1 格），所以切进替身时必须换掉 unit.rangeGrid。
+ */
+const DOLL_RANGE_GRID = Object.freeze([
+  [0, 0], [0, 1], [0, 2], [0, -1], [0, -2],
+  [1, 0], [1, 1], [1, -1],
+  [-1, 0], [-1, 1], [-1, -1],
+  [2, 0], [-2, 0],
+]);
+
+/**
  * 他的 kit。
  * @param {object} bb 所选出技能的黑板（rank 4 或 7）
  * @param {object} raw 棋子原始记录（取另两个技能的黑板 / 天赋 / 范围）
@@ -68,20 +80,23 @@ function makoto(bb, raw, def) {
   const bbCur = (id) => (curId() === id ? bb : bbOf(id));
   const s1 = bbCur(S1), s2 = bbCur(S2), s3 = bbCur(S3);
   const inDoll = (u) => !!u.trait?.doll;
-  /** 该形态的攻击范围钥匙（替身与本体范围不同，引擎已按形态重建 rangeKeys）。 */
+  /** 该形态的攻击范围钥匙（替身是 13 格菱形，本体是近战 2 格 —— 见 DOLL_RANGE_GRID）。 */
   const rangeKeysOf = (u) => u.rangeKeys ?? [];
   /**
    * "攻击范围内"的敌人。`enemiesInKeys` 要求目标 `deployed`（sim/targeting.js canTargetEnemy），而**敌人在本引擎里
-   * 不是 deployed 单位**，所以这里按范围半径取：与他同格或其攻击范围内的钥匙覆盖到的敌人，走 `foesInRadius`。
-   * 替身范围一般只有 1–2 格，半径 1.5 与官方"一定范围"一致（[ASSUMED]）。
+   * 不是 deployed 单位**，所以逐格取（`foesInRadius` 半径 1 正好覆盖该格）。
+   * `air = false` 时排除飞行单位（S2 不能对空，PRTS 备注：仅 S1/S3 可对空）。
    */
-  const enemiesInRange = (battle, u) => {
+  const enemiesInRange = (battle, u, air = true) => {
     const out = [];
     for (const k of rangeKeysOf(u)) {
       const r = Math.floor(k / COLS), c = k % COLS;
-      for (const e of battle.foesInRadius?.(c, r, 1.5, true) ?? []) if (!out.includes(e)) out.push(e);
+      for (const e of battle.foesInRadius?.(c, r, 1, true) ?? []) {
+        if (!air && e.isFlying) continue;
+        if (!out.includes(e)) out.push(e);
+      }
     }
-    return out.length ? out : (battle.foesInRadius?.(u.tileC, u.tileR, 1.5, true) ?? []);
+    return out;
   };
 
   // ── 不羁之力（天赋 1）：替身形态的数值 + 切换时的停顿 ─────────────────────────────────────────
@@ -135,6 +150,8 @@ function makoto(bb, raw, def) {
     // 所属技能：S1 → s1（俄耳甫斯），S2 → s2（塔纳托斯：多目标/恐惧/斩杀），S3 → s3（弱点伤害/治疗/闪避）
     const src = cur === S1 ? s1 : cur === S2 ? s2 : s3;
     const isOrpheus = cur === S1 || mode === 'orpheus';   // S1 的替身本就是俄耳甫斯；S3 形态3 也走俄耳甫斯
+    // 对空：官方备注只有 S1/S3 可对空，S2 不可（PRTS 结城理 技能备注）
+    const air = cur !== S2;
     const scale = num(src['attack@atk_scale'] ?? bb['attack@atk_scale'], 1);
     const atk = unit.s.atk;
 
@@ -150,7 +167,7 @@ function makoto(bb, raw, def) {
     }
 
     const maxTargets = isOrpheus ? 1 : Math.max(1, num(src['attack@max_target'], 1));
-    const targets = enemiesInRange(battle, unit).slice(0, maxTargets);
+    const targets = enemiesInRange(battle, unit, air).slice(0, maxTargets);
 
     // 斩杀判定读**攻击前**的血量（官方"攻击的同时，范围内恐惧中的敌人若生命值低于阈值则立刻倒下"）。
     // 钩子是在引擎的普通攻击伤害之后跑的，所以若在这里读 e.hp，血量已被打掉一段，
@@ -159,7 +176,7 @@ function makoto(bb, raw, def) {
     if (cur === S2) {
       const k = num(s2['attack@kill_atk_scale'], 0);
       const dmg = num(s2['attack@kill_damage'], 9999999);
-      if (k > 0) for (const e of enemiesInRange(battle, unit)) {
+      if (k > 0) for (const e of enemiesInRange(battle, unit, air)) {
         if (!e.alive || !feared(e) || executed.has(e)) continue;
         if (e.hp < atk * k) {
           battle.dealDamage(unit, e, { amount: dmg, type: 'arts', isSkill: true, canDodge: false, tags: ['skill', 'makoto:execute'] });
@@ -255,26 +272,55 @@ function makoto(bb, raw, def) {
       // 实测表现为一上场就永久替身。'instant' 才对应官方"开启技能瞬间切换"。
       // 触发规则保持官方数据的 SKILL_RANGE（技能范围内存在敌人时开启，本模式常态自动开启）；
       // 形态3 由 kit 用 setTrigger('NEVER') 关掉自动开启（见 switchToDoll）。
-      [S1]: { kind: 'instant', onStart({ battle, unit }) { switchToDoll(battle, unit); } },
+      [S1]: { kind: 'instant', attack: { canHitFly: true }, onStart({ battle, unit }) { switchToDoll(battle, unit); } },
       [S2]: { kind: 'instant', onStart({ battle, unit }) { switchToDoll(battle, unit); } },
-      [S3]: { kind: 'instant', onStart({ battle, unit }) { switchToDoll(battle, unit); } },
+      [S3]: { kind: 'instant', attack: { canHitFly: true }, onStart({ battle, unit }) { switchToDoll(battle, unit); } },
     },
     talents: [
       { install: installTalent1 },
       { install(battle, unit) { installOrpheusAura(battle, unit); } },
     ],
     install(battle, unit) {
-      // 只在**切进替身**时挂替身数值与攻击接线（开场是<本体>，什么都没有）；
+      // 只在**切进替身**时挂替身范围/数值与攻击接线（开场是<本体>，什么都没有）；
       // 受致命伤由引擎的傀儡师分支自己触发 dollSwap，所以这条覆盖"开技能"和"血条空了"两条路径。
       battle.on('dollSwap', ({ unit: u, form }) => {
         if (u !== unit) return;
-        if (form === 'doll') { applyTalentMods(battle, unit); installDollAttack(battle, unit); }
-        else removeTalentMods(battle, unit);
+        if (form === 'doll') { applyDollRange(battle, unit); applyTalentMods(battle, unit); installDollAttack(battle, unit); }
+        else { restoreBodyRange(battle, unit); removeTalentMods(battle, unit); }
       }, { owner: unit, priority: -10 });
     },
   };
 
-  // ── 内部：替身数值 / 替身攻击接线 ──────────────────────────────────────────────────────────
+  // ── 内部：替身范围 / 数值 / 攻击接线 ────────────────────────────────────────────────────────
+  /**
+   * 切进<替身>：换成官方的 13 格菱形攻击范围（本体是 `1-1` 的近战 2 格），
+   * 并按技能决定**能不能对空**（官方备注：S1/S3 可对空，S2 不可）。
+   *
+   * 对空为什么改 profile：`ai.js` 判 `prof.canHitFly`，而 prof = 数据 profile 或**技能 active 时的
+   * `attackOverride()`**。他的技能是 `kind:'instant'`（开完 active 就是 false），
+   * 所以 spec.attack 里的 canHitFly **根本不会被读到**（实测 attackOverride()=null）。
+   * `unit.profile` 是每个单位自己解析出来的对象，直接改它、离开时还原最稳妥，也不影响共享表。
+   */
+  function applyDollRange(battle, unit) {
+    if (unit.mem.makotoBaseGrid === undefined) unit.mem.makotoBaseGrid = unit.rangeGrid ?? null;
+    unit.rangeGrid = DOLL_RANGE_GRID;
+    battle.refreshRange?.(unit);
+    if (unit.profile && unit.mem.makotoBaseFly === undefined) {
+      unit.mem.makotoBaseFly = !!unit.profile.canHitFly;
+      unit.profile.canHitFly = curId() !== S2;   // S1/S3 可对空，S2 不可
+    }
+  }
+  function restoreBodyRange(battle, unit) {
+    if (unit.mem.makotoBaseGrid !== undefined) {
+      unit.rangeGrid = unit.mem.makotoBaseGrid;
+      unit.mem.makotoBaseGrid = undefined;
+      battle.refreshRange?.(unit);
+    }
+    if (unit.profile && unit.mem.makotoBaseFly !== undefined) {
+      unit.profile.canHitFly = unit.mem.makotoBaseFly;
+      unit.mem.makotoBaseFly = undefined;
+    }
+  }
   function applyTalentMods(battle, unit) {
     const atk = num(t0.atk, 0);
     const hp = num(t0.max_hp_t1, 0);

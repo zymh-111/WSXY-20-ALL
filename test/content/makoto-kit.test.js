@@ -216,6 +216,48 @@ test('S2 斩杀是条件式的：血量远高于阈值时不斩（不是"有几�
   checkInvariants(h.b);
 });
 
+test('攻击范围：本体 2 格；切进<替身>变 13 格菱形（官方 range_table x-1）', () => {
+  const h = put(0);
+  const u = ready(h);
+  const COLS = 21;
+  const rel = (keys) => (keys ?? []).map((k) => `${Math.floor(k / COLS) - u.tileR},${(k % COLS) - u.tileC}`).sort();
+  assert.equal(u.rangeKeys.length, 2, '本体是近战 2 格（1-1：自己 + 身前 1 格）');
+  assert.deepEqual(rel(u.rangeKeys), ['0,0', '0,1'], '本体范围');
+  u.skill.activate('test', { free: true });
+  assert.equal(u.rangeKeys.length, 13, '替身是 13 格菱形');
+  assert.deepEqual(rel(u.rangeKeys), [
+    '-1,-1', '-1,0', '-1,1', '-2,0', '0,-1', '0,-2', '0,0', '0,1', '0,2', '1,-1', '1,0', '1,1', '2,0',
+  ].sort(), '替身范围 = 中心 + 上下左右各 2 格 + 四个斜角');
+  // 回本体后范围还原
+  assert.ok(h.runUntil(() => !u.trait.doll, 26), '替身到期');
+  assert.equal(u.rangeKeys.length, 2, '回本体后范围还原成 2 格');
+  assert.deepEqual(rel(u.rangeKeys), ['0,0', '0,1'], '还原后的范围');
+  checkInvariants(h.b);
+});
+
+test('对空：S1/S3 的替身可对空，S2 的替身不可（官方备注）', () => {
+  const DEFS2 = { enemies: { enemy_flyer: enemyRec({ key: 'enemy_flyer', hp: 1e7, speed: 0, def: 0, isFlying: true, motion: 'FLY' }) } };
+  const make = (skill) => makeBattle({
+    defs: DEFS2, timeLimit: 0, autoFinish: false, hooks: HOOKS, captureNoisy: true, seed: 5,
+    units: [{ diy: { slot: 6, charId: MAKOTO, skillIndex: skill, uniEquipId: null }, row: 10, col: 3 }],
+  });
+  const run = (skill) => {
+    const h = make(skill);
+    h.step(1);
+    const u = h.unit(SLOT);
+    assert.equal(u.profile.canHitFly, false, '本体不对空');
+    const flyer = h.spawn('enemy_flyer', { pos: [9, 4] });   // 斜角格：替身范围内、本体范围外
+    u.skill.activate('test', { free: true });
+    assert.equal(u.profile.canHitFly, skill === 1 ? false : true, `技能${skill + 1} 的替身对空=${skill !== 1}`);
+    for (let i = 0; i < 30 * 6; i++) h.step(1);              // 场上只有空中目标，看他打不打
+    const hits = h.hooksOf('damaged').filter((c) => c.target === flyer);
+    return hits.length;
+  };
+  assert.ok(run(2) > 0, 'S3：引擎自己会攻击空中目标');
+  assert.equal(run(1), 0, 'S2：不能对空（打不到）');
+  assert.ok(run(0) > 0, 'S1：可对空');
+});
+
 test('S1 俄耳甫斯：范围内没有低血友方时按攻击结算（有低于 50% 的友方才改为治疗）', () => {
   const h = put(0);
   const u = ready(h);
