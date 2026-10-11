@@ -3,6 +3,9 @@
 importScripts('/vendor/zip-native.min.js');
 zip.configure({ useWebWorkers: false });
 const helpers = import('../../shared/assetCache.js');
+// One lane per 8 Mbps of the server's per-client budget; the server enforces the client ceiling, so extra
+// lanes only add queue pressure. Keep in step with ASSET_CACHE_LIMIT_DEFAULTS in server/http/cacheLimiter.js.
+const LANES = 4;
 let active = null;
 
 function cancelled() {
@@ -61,11 +64,28 @@ async function work(message) {
       report({ scanStats: { checked, invalid } });
     }
   } else if (message.action === 'download') {
-    let received = 0;
+    let received = 0, lastReport = 0;
     const started = performance.now();
-    for (const entry of catalog.files) {
-      cancelled();
-      if (ready(entry)) continue;
+    const speed = () => Math.round(received * 1000 / Math.max(1, performance.now() - started));
+    const progress = () => {
+      const now = performance.now();
+      if (now - lastReport < 250) return;
+      lastReport = now;
+      report({ waiting: false, speedBps: speed() });
+    };
+    // Files are handed out in catalog order; a hash already claimed by a lane is never fetched twice.
+    const claimed = new Set();
+    let cursor = 0;
+    const next = () => {
+      while (cursor < catalog.files.length) {
+        const entry = catalog.files[cursor++];
+        if (ready(entry) || claimed.has(entry.sha256)) continue;
+        claimed.add(entry.sha256);
+        return entry;
+      }
+      return null;
+    };
+    const open = async (entry) => {
       let response;
       for (let retry = 0; retry < 6; retry++) {
         cancelled();
@@ -81,9 +101,13 @@ async function work(message) {
       if (response.status === 429) throw h.assetCacheError('ASSET_CACHE_BUSY');
       if (response.status !== 200 || Number(response.headers.get('content-length')) !== entry.bytes)
         throw h.assetCacheError('ASSET_CACHE_DOWNLOAD_FAILED');
+      return response;
+    };
+    const fetchOne = async (entry) => {
+      const response = await open(entry);
       const buffer = new Uint8Array(entry.bytes);
       const reader = response.body.getReader();
-      let offset = 0, lastReport = 0;
+      let offset = 0;
       try {
         while (true) {
           cancelled();
@@ -91,15 +115,22 @@ async function work(message) {
           if (chunk.done) break;
           if (offset + chunk.value.length > entry.bytes) throw h.assetCacheError('ASSET_CACHE_FILE_TOO_LARGE');
           buffer.set(chunk.value, offset); offset += chunk.value.length; received += chunk.value.length;
-          if (performance.now() - lastReport > 250) {
-            report({ waiting: false, speedBps: Math.round(received * 1000 / Math.max(1, performance.now() - started)) });
-            lastReport = performance.now();
-          }
+          progress();
         }
       } finally { await reader.cancel().catch(() => {}); }
       if (offset !== entry.bytes) throw h.assetCacheError('ASSET_CACHE_DOWNLOAD_FAILED');
       await store(entry, buffer);
-      report({ waiting: false, speedBps: Math.round(received * 1000 / Math.max(1, performance.now() - started)) });
+      report({ waiting: false, speedBps: speed() });
+    };
+    const lane = async () => {
+      for (let entry = next(); entry; entry = next()) { cancelled(); await fetchOne(entry); }
+    };
+    try {
+      await Promise.all(Array.from({ length: LANES }, lane));
+    } catch (error) {
+      // A failing lane must not leave the other lanes holding sockets open.
+      active.abort.abort();
+      throw error;
     }
   } else if (message.action === 'import') {
     if (!(message.file instanceof Blob)) throw h.assetCacheError('ASSET_CACHE_ZIP_INVALID');

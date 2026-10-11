@@ -62,7 +62,7 @@ test('pre-cache status/catalog share one snapshot; gzip, conditional GET and HEA
     const [status, index] = await Promise.all([request(server, '/api/asset-cache/status'), request(server, '/api/asset-cache/catalog')]);
     const report = JSON.parse(status.body);
     assert.equal(report.totalBytes, catalog.totalBytes); assert.equal(report.totalFiles, 2);
-    assert.equal(report.policy.totalBps, 1_000_000); assert.equal(report.policy.clientBps, 500_000);
+    assert.equal(report.policy.totalBps, 20_000_000); assert.equal(report.policy.clientBps, 4_000_000);
     assert.equal(report.policy.activeDownloads, 0); assert.equal(builds(), 1);
     assert.equal(status.headers['cache-control'], 'no-store');
     assert.deepEqual(JSON.parse(index.body), catalog); assert.equal(index.headers['cache-control'], 'no-cache');
@@ -207,6 +207,15 @@ test('multiple responses from one client share its ceiling; cancellation release
     assert.equal(assetCache.policy().activeDownloads, 0);
     assert.equal((await request(server, downloadURL(files[1]))).status, 200);
   }, { sizes: [40_000, 40_000], limits: { totalBps: 1_000_000, clientBps: 80_000 } });
+});
+
+test('the default per-client cap admits four concurrent downloads and refuses a fifth', async () => {
+  await fixture(async ({ server, files, assetCache }) => {
+    const responses = await Promise.all(files.map((entry) => request(server, downloadURL(entry))));
+    assert.deepEqual(responses.map((response) => response.status).sort(), [200, 200, 200, 200, 429],
+      'four lanes are served; the extra one waits for a slot like the browser worker does');
+    assert.equal(assetCache.policy().activeDownloads, 0);
+  }, { sizes: [80_000, 80_000, 80_000, 80_000, 80_000], limits: { totalBps: 320_000, clientBps: 320_000 } });
 });
 
 test('rate configuration uses byte units and fails closed on invalid values', () => {

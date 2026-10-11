@@ -2,8 +2,10 @@
 // Token buckets account bytes accepted by node:http; round-robin is by client, then by that client's files.
 import { performance } from 'node:perf_hooks';
 
+// Budgets are bytes per second: 20_000_000 B/s = 160 Mbps aggregate, 4_000_000 B/s = 32 Mbps per client
+// (four 8 Mbps download lanes). See docs/ASSET_CACHE.md for the deployment assumptions.
 export const ASSET_CACHE_LIMIT_DEFAULTS = Object.freeze({
-  totalBps: 1_000_000, clientBps: 500_000, maxDownloads: 24, maxDownloadsPerClient: 2,
+  totalBps: 20_000_000, clientBps: 4_000_000, maxDownloads: 48, maxDownloadsPerClient: 4,
 });
 
 const QUANTUM = 8 * 1024;
