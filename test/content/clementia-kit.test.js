@@ -173,3 +173,19 @@ test('talent 习得性防御: physical damage from a source in front of her is c
   assert.ok(rear > front, `damage from behind is not cut (${rear} > ${front})`);
   checkInvariants(h.b);
 });
+
+test('她登记在阿戈尔盟约的成员名单里（面板成员列表与计数一致）', async () => {
+  // 两个名单必须一致：计数读棋子自己的 bonds[]（bondsMeta.membership），面板读 bond.members /
+  // visibleMembers（buildBonds 从官方活动表的 bondInfoDict[bondId].chessIdList 生成，
+  // 由 tools/apply-clementia-bond.mjs 补上她；只加棋池三张表是不够的）。
+  const { readFileSync } = await import('node:fs');
+  const bonds = JSON.parse(readFileSync(new URL('../../data/bonds.json', import.meta.url), 'utf8'));
+  const list = bonds.bonds ?? bonds;
+  const egir = list.egirShip;
+  assert.ok(egir, '阿戈尔（egirShip）盟约存在');
+  assert.ok(egir.members.includes(CHESS_E), `bond.members 含她（现有 ${egir.members.length} 人）`);
+  assert.ok(egir.visibleMembers.includes(CHESS_E), 'visibleMembers（面板用的那份）含她');
+  const chess = JSON.parse(readFileSync(new URL('../../data/chess.json', import.meta.url), 'utf8'));
+  const rec = (chess.chess ?? chess)[CHESS_E];
+  assert.ok(rec.bonds.includes('egirShip'), '她的棋子记录仍属于该盟约');
+});

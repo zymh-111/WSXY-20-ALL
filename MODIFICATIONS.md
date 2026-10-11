@@ -18,6 +18,8 @@
 
 | 2026-10-11 | `data/assets.json`、`tools/apply-clementia-spine.mjs`（新增）、`tools/revert-clementia-spine.mjs`（新增）、`tools/deploy-clementia.mjs` | **补上克莱门莎的 Spine 清单条目**。客户端解析战场小人只认 `data/assets.json` 的 `chars[charId].spine.front`（`public/js/assets.js spineEntry`），没有 `spine` 字段就拿不到任何 URL、模型只能退回占位符；而该清单由 `tools/fetch-assets.mjs` 生成，其下载计划来自硬编码的 209 人资源索引，她 2026-10-09 才上线、不在其中，所以素材就位后清单里始终缺这一条。新增的 `apply-clementia-spine.mjs` 用官方同一套函数（`tools/assets/skel.mjs` `parseSkel`、`anim-roles.mjs` `resolveRoles`、`atlas.mjs` `normalizeAtlas`）生成并写入条目，并给她的 `.atlas` 补上页面缺的 `size: W,H` 行；`deploy-clementia.mjs` 第 5 步自动调用它。 |
 
+| 2026-10-11 | `data/bonds.json`、`tools/apply-clementia-bond.mjs`（新增）、`tools/revert-clementia-bond.mjs`（新增）、`tools/deploy-clementia.mjs`、`test/content/clementia-kit.test.js` | **把克莱门莎登记进阿戈尔盟约的成员名单**。`apply-clementia-patch.mjs` 当初只写了棋池三张表，没动盟约成员表 `bondInfoDict.egirShip.chessIdList`（官方那份名单定稿早于她上线），于是 `data/bonds.json` 的 `egirShip.members` / `visibleMembers` 不含她 —— 盟约面板的「成员」列表读的正是这份（`public/js/ui/gameLogic/bonds.js bondMembers`），所以她在阿戈尔里看不到；而盟约**计数与效果其实一直生效**（`server/match/bondsMeta.js membership()` 读棋子自己的 `bonds[]`）。新增工具把 `chess_char_6_21_a` 补进该名单并接进 `deploy-clementia.mjs` 第 4 步，两个名单现已一致；测试增加一条断言锁住它。 |
+
 ## 与上游的关系
 
 - 上游原始项目：`sganggs/Stronghold-Protocol`（作者 sganggs）

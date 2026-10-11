@@ -23,9 +23,15 @@
 //   3. 往 .cache/gamedata/excel/activity_table.json 写入 4 条棋池记录
 //      （charChessDataDict ×2、charShopChessDatas ×1、chessNormalIdLookupDict ×1）
 //   4. 修正 tools/build-data.mjs 的可见棋子断言（112 → 113）
-//   5. 调 tools/apply-clementia-spine.mjs 补上 data/assets.json 的 spine 清单条目
+//   5. 调 tools/apply-clementia-bond.mjs 把她登记进盟约成员名单（阿戈尔；只加棋池三张表不够，
+//      盟约面板的「成员」列表读的是活动表 bondInfoDict.egirShip.chessIdList）
+//   6. 调 tools/apply-clementia-spine.mjs 补上 data/assets.json 的 spine 清单条目
 //      （第 2 步只写立绘/头像/技能图标；没有 `spine` 字段客户端就画不出她的战场小人，
 //        见 tools/apply-clementia-spine.mjs 顶部说明）
+//
+// 注意：第 3/5 步改的是 .cache 里的官方活动表、第 6 步改的是已生成的 data/assets.json，
+//       所以顺序是「先 deploy → 再 npm run build-data → 若 data 被重建则再跑一次 deploy」
+//       （脚本对缺文件是幂等跳过的）。
 //
 // 之后请运行：npm run build-data && 重启服务 && 浏览器硬刷新
 
@@ -217,9 +223,24 @@ else {
 }
 
 // ─────────────────────────────────────────────
-// 4) 修正 build-data.mjs 的可见棋子断言
+// 4) 把她登记进所属盟约的成员名单（阿戈尔 / egirShip）
 // ─────────────────────────────────────────────
-log('\n=== 4) 修正构建断言（可见棋子 112 → 113）===');
+log('\n=== 4) 登记盟约成员名单（阿戈尔）===');
+const BOND_TOOL = resolve(ROOT, 'tools/apply-clementia-bond.mjs');
+if (!existsSync(BOND_TOOL)) log('  [跳过] tools/apply-clementia-bond.mjs 不存在，请手动把 ' + CHAR_ID + ' 加入 bondInfoDict.egirShip.chessIdList');
+else {
+  try {
+    execFileSync('node', [BOND_TOOL], { stdio: 'inherit', cwd: ROOT });
+  } catch (e) {
+    log('  [失败] apply-clementia-bond.mjs 未成功（退出码 ' + (e && e.status) + '）—— 详情见上面输出');
+    failed++;
+  }
+}
+
+// ─────────────────────────────────────────────
+// 5) 修正 build-data.mjs 的可见棋子断言
+// ─────────────────────────────────────────────
+log('\n=== 5) 修正构建断言（可见棋子 112 → 113）===');
 const BP = resolve(ROOT, 'tools/build-data.mjs');
 if (!existsSync(BP)) log('  [跳过] tools/build-data.mjs 不存在');
 else {
@@ -238,9 +259,9 @@ else {
 }
 
 // ─────────────────────────────────────────────
-// 5) 补 data/assets.json 的 spine 清单条目
+// 6) 补 data/assets.json 的 spine 清单条目
 // ─────────────────────────────────────────────
-log('\n=== 5) 补 spine 清单条目（客户端靠它加载战场小人）===');
+log('\n=== 6) 补 spine 清单条目（客户端靠它加载战场小人）===');
 const SP = resolve(ROOT, 'tools/apply-clementia-spine.mjs');
 if (!existsSync(SP)) log('  [跳过] tools/apply-clementia-spine.mjs 不存在，请手动补 spine 条目');
 else {
