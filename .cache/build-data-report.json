@@ -1,0 +1,45 @@
+{
+  "counts": {
+    "chess": 266,
+    "visibleChess": 112,
+    "bonds": 23,
+    "garrisons": 249,
+    "items": 115,
+    "bands": 40,
+    "effects": 361,
+    "enemies": 249,
+    "waves": 38,
+    "stages": 13,
+    "bosses": 10,
+    "tokens": 22,
+    "factionEntries": 67,
+    "backupUnits": 89,
+    "backupForms": 259,
+    "backupTokens": 38,
+    "diyOwnedPicks": 72
+  },
+  "sizes": {
+    "config": 63217,
+    "chess": 1875834,
+    "bonds": 85693,
+    "garrisons": 150039,
+    "items": 170806,
+    "bands": 35918,
+    "effects": 253427,
+    "choices": 124363,
+    "enemies": 407255,
+    "factions": 22026,
+    "waves": 137772,
+    "stages": 266095,
+    "bosses": 18057,
+    "tokens": 138571,
+    "backups": 2056247
+  },
+  "totalBytes": 5805320,
+  "out": "/opt/stronghold/data",
+  "written": true,
+  "warnings": [
+    "stage act1autochess_m01: dropped research annotation from name \"战场#01 (upper half #01)\" -> \"战场#01\""
+  ],
+  "errors": []
+}

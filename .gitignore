@@ -2,3 +2,8 @@
 *.bak-*
 *.orig
 *.rej
+
+# --- patch backup files ---
+*.bak
+*.bak-*
+*.orig
