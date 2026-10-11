@@ -621,7 +621,9 @@ export class Network {
       // client-side combat reports (b.progress / b.result, DESIGN §14) belong to the running match like 'g.*' intents:
       // handed to the lobby's match router when the handler has one (server/lobby.js routeGame)
       if (msg.t.startsWith('b.') && typeof this.handler.routeGame === 'function') res = this.handler.routeGame(conn.session, msg);
-      else res = this.handler.onMessage(conn.session, msg);
+      // [CUSTOM DEV_BACKDOOR] 把「来源是否为本机/内网」一并交给 handler（conn.ip 由 clientAddress 算好，
+      // 这里用 net.js 自己的 isLocalIp 判定）。只有测试后门用得到，见 server/match/dev.js。
+      else res = this.handler.onMessage(conn.session, msg, { isLocal: isLocalIp(conn.ip) });
     } catch (e) {
       this.log.error(`[net] handler crashed on ${msg.t}`, e);
       res = { error: ERR.INTERNAL };

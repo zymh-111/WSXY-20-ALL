@@ -106,6 +106,7 @@ import { getData as defaultGetData, lookup } from './data.js';
 import { Match as DefaultMatch } from './match/Match.js';
 import { KITTED_CHARS } from './sim/content/kits/index.js';
 import { LobbyDiscovery } from './lobbyDiscovery.js';
+import { handleDev } from './match/dev.js';   // [CUSTOM DEV_BACKDOOR] 测试后门（仅本机/内网 + solo）
 
 /** Room code alphabet: uppercase letters without I and O (and no digits, so no 0/1). */
 export const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
@@ -337,7 +338,7 @@ export class Lobby {
    * @param {any} msg
    * @returns {{ ok: true } | { error: string, detail?: string }}
    */
-  onMessage(session, msg) {
+  onMessage(session, msg, ctx = {}) {
     switch (msg.t) {
       case 'lobby.watch': return this.discovery.watch(session, msg);
       case 'lobby.quickMatch': return this.discovery.quickMatch(session, msg);
@@ -356,6 +357,8 @@ export class Lobby {
       case 'room.ownership': return this.ownership(session, msg);
       case 'room.diy': return this.diy(session, msg);
       case 'room.spectate': return this.spectate(session, msg);
+      // [CUSTOM DEV_BACKDOOR] 测试后门：只对本机/内网 + solo 单人房生效，见 server/match/dev.js
+      case 'dev': return handleDev(this, session, msg, ctx);
       case 'room.removeSpectator': return this.removeSpectator(session, msg);
       default:
         if (typeof msg.t === 'string' && msg.t.startsWith('g.')) return this.routeGame(session, msg);
