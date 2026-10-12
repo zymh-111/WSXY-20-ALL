@@ -16,7 +16,8 @@
 import { net } from './net.js';
 
 /** 后门支持的操作（与服务端 handleDev 一一对应）。 */
-const OPS = Object.freeze(['state', 'funds', 'level', 'refresh', 'layers', 'layersAll', 'setLayers', 'pick', 'opPool', 'ops']);
+const OPS = Object.freeze(['state', 'funds', 'level', 'refresh', 'layers', 'layersAll', 'setLayers', 'pick', 'opPool', 'ops',
+  'devStatus', 'devToggle']);
 
 /** 发一条后门指令；失败把服务端的 error/detail 原样抛出来。 */
 async function dev(op, fields = {}) {
@@ -46,6 +47,10 @@ const api = {
   opPool: () => dev('opPool'),
   /** 槽位与房间信息（含放宽开关状态）。 */
   ops: () => dev('ops'),
+  /** 后门开关状态（不需要开关已开）。 */
+  devStatus: () => dev('devStatus'),
+  /** 开/关本房间的后门开关。 */
+  devToggle: (on) => dev('devToggle', typeof on === 'boolean' ? { on } : {}),
   dev,
 };
 
@@ -70,6 +75,34 @@ function buildPanel() {
   close.onclick = () => api.hide();
   head.append(close);
   root.append(head);
+
+  // ── 后门开关（每个房间一个；默认关闭）──
+  const swWrap = el('div', { display: 'flex', alignItems: 'center', gap: '6px', margin: '4px 0 6px' });
+  const sw = el('input', { cursor: 'pointer' }); sw.type = 'checkbox';
+  const swLabel = el('span', { color: '#ffd479' }, '后门：读状态…');
+  sw.onchange = async () => {
+    try {
+      const r = await api.devToggle(sw.checked);
+      swLabel.style.color = '#9fe6a0';
+      swLabel.textContent = '后门：' + (r.enabled ? '已开启' : '已关闭') + '（' + (r.room ?? '?') + '）';
+      sw.checked = !!r.enabled;
+    } catch (e) {
+      swLabel.style.color = '#ff9a9a';
+      swLabel.textContent = String(e.message ?? e);
+      sw.checked = !sw.checked;
+    }
+  };
+  swWrap.append(sw, swLabel);
+  root.append(swWrap);
+  (async () => {
+    try {
+      const r = await api.devStatus();
+      sw.checked = !!r.enabled;
+      swLabel.style.color = r.enabled ? '#9fe6a0' : '#ffd479';
+      swLabel.textContent = '后门：' + (r.enabled ? '已开启' : '未开启') + '（' + (r.room ?? '?') + '）'
+        + (r.localOnly ? ' · 限本机' : ' · 不限于本机');
+    } catch (e) { swLabel.textContent = String(e.message ?? e); }
+  })();
 
   const status = el('div', { minHeight: '3.2em', whiteSpace: 'pre-wrap', color: '#9fb3c8' }, '（点“读状态”）');
   const log = el('div', { marginTop: '6px', minHeight: '2.4em', whiteSpace: 'pre-wrap', color: '#ffd479' });

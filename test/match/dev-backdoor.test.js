@@ -1,16 +1,22 @@
-// test/match/dev-backdoor.test.js — [CUSTOM] 测试后门（server/match/dev.js）的**安全边界**与操作。
+// test/match/dev-backdoor.test.js — [CUSTOM] 测试后门（server/match/dev.js）的门禁与操作。
 //
-// 这个后门能改玩家经济，所以最要紧的是"门关得严"：
-//   1) 非本机/内网来源一律拒绝（否则等于公网开挂）
-//   2) 非 solo 房间一律拒绝（不能污染多人对局）
-//   3) 拿不到自己的 PlayerState 就拒绝
-// 用假的 lobby / session / PlayerState 直接驱动 handleDev —— 它是纯函数，可以不起服务器。
+// 这个后门能改玩家经济，所以最要紧的是"门关得严"。当前门禁（按需求做过调整）：
+//   0) **运行时开关**：每个房间 room.devEnabled，**默认关闭**；所有改状态的操作都要求它开着
+//      （devToggle / devStatus 不需要）。想开局即开可用 DSH_DEV_DEFAULT_ON=1。
+//   1) 来源：**默认不再限制本机/内网**；想收回用 DSH_DEV_LOCAL_ONLY=1。
+//   2) 房间：默认只允许 solo；共测用 DSH_DEV_ANY_ROOM=1 放宽。
+//   3) 身份：只能作用于调用者自己的座位。
+//   4) DSH_DEV_DISABLED=1 则彻底禁用。
+// 用假的 lobby / session / PlayerState 直接驱动 handleDev（纯函数，不起服务器）。
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { handleDev } from '../../server/match/dev.js';
 
-/** 假的 PlayerState：只提供后门用到的那几个方法，并记录调用。 */
+const SESSION = { playerId: 'p1' };
+const LOCAL = { isLocal: true };
+
+/** 假的 PlayerState：只提供后门用到的方法/字段，并记录调用。 */
 function fakePlayer({ funds = 10, shopLevel = 1, maxShopLevel = 6, upgradePrice = 4, bondIds = ['egirShip'] } = {}) {
   const calls = [];
   const ps = {
@@ -19,10 +25,16 @@ function fakePlayer({ funds = 10, shopLevel = 1, maxShopLevel = 6, upgradePrice 
     layers: {}, bonds: Object.fromEntries(bondIds.map((b) => [b, { active: false, layers: 0 }])),
     diy: { chess_char_6_diy1_a: { charId: 'char_4217_makoto', skillIndex: 0 } },
     standIns: [],
-    gd: { maxShopLevel, upgradeBase: () => upgradePrice,
-      raw: { diy: { ownedPool: ['char_4217_makoto', 'char_112_siege'],
-        operators: { char_4217_makoto: { name: '结城理', profession: 'SPECIAL', bonds: ['lateranoShip', 'raidShip'] } },
-        slots: { chess_char_6_diy1_a: { tier: 6, shopLevel: 6 } } } } },
+    gd: {
+      maxShopLevel, upgradeBase: () => upgradePrice,
+      raw: {
+        diy: {
+          ownedPool: ['char_4217_makoto', 'char_112_siege'],
+          operators: { char_4217_makoto: { name: '结城理', profession: 'SPECIAL', bonds: ['lateranoShip', 'raidShip'] } },
+          slots: { chess_char_6_diy1_a: { tier: 6, shopLevel: 6 } },
+        },
+      },
+    },
     addFunds(n, opts) { calls.push(['addFunds', n, opts]); this.funds += n; return n; },
     levelUp() {
       if (this.shop.level >= maxShopLevel) return { error: 'MAX_LEVEL' };
@@ -45,164 +57,164 @@ function fakePlayer({ funds = 10, shopLevel = 1, maxShopLevel = 6, upgradePrice 
   return ps;
 }
 
-/** 假的房间 / 大厅 / 会话。 */
-function fakeLobby({ mode = 'solo', started = true, ps = fakePlayer(), playerId = 'p1' } = {}) {
+/** 假的房间 / 大厅：lobby._room 就是那个房间，开关状态写在它上面。 */
+function fakeLobby({ mode = 'solo', started = true, ps = fakePlayer(), playerId = 'p1', dev = false } = {}) {
   const match = started ? { players: new Map(ps ? [[playerId, ps]] : []), gd: ps?.gd ?? null } : null;
-  const room = { mode, match };
+  const room = { mode, match, devEnabled: dev };
   return { roomOf: () => room, _room: room, _ps: ps };
 }
-const session = { playerId: 'p1' };
+/** 打开房间开关（等价于在面板里点「开启后门」）。 */
+const withDev = (lobby) => { lobby._room.devEnabled = true; return lobby; };
 
-// ── 安全边界 ────────────────────────────────────────────────────────────────
+// ── 门禁 ─────────────────────────────────────────────────────────────────────
 
-test('门禁：非本机/内网来源一律拒绝', () => {
+test('开关：默认关闭；关闭时改状态的操作全被拒；devToggle 可开可关', () => {
   const lobby = fakeLobby();
-  const res = handleDev(lobby, session, { op: 'funds', n: 999 }, { isLocal: false });
-  assert.equal(res.error, 'BAD_TARGET', '公网来源被拒');
-  assert.equal(lobby._ps.funds, 10, '资金没被动过');
-  // 连读状态也拒绝（不泄露服务器内部信息）
-  assert.equal(handleDev(lobby, session, { op: 'state' }, { isLocal: false }).error, 'BAD_TARGET');
-  // 缺省 ctx 同样按"非本机"处理（失败要关闭，不能默认放行）
-  assert.equal(handleDev(lobby, session, { op: 'funds', n: 1 }, undefined).error, 'BAD_TARGET');
+  assert.equal(handleDev(lobby, SESSION, { op: 'devStatus' }, LOCAL).enabled, false, '默认关闭');
+  assert.equal(handleDev(lobby, SESSION, { op: 'funds', n: 1 }, LOCAL).error, 'BAD_TARGET', '关闭时 funds 被拒');
+  assert.match(handleDev(lobby, SESSION, { op: 'funds', n: 1 }, LOCAL).detail ?? '', /开关未开启/);
+
+  const on = handleDev(lobby, SESSION, { op: 'devToggle', on: true }, LOCAL);
+  assert.equal(on.enabled, true, '开关打开');
+  assert.equal(handleDev(lobby, SESSION, { op: 'funds', n: 1 }, LOCAL).ok, true, '开启后可用');
+
+  const back = handleDev(lobby, SESSION, { op: 'devToggle', on: false }, LOCAL);
+  assert.equal(back.enabled, false, '再关回去');
+  assert.equal(handleDev(lobby, SESSION, { op: 'funds', n: 1 }, LOCAL).error, 'BAD_TARGET', '关闭后又被拒');
+  assert.equal(handleDev(lobby, SESSION, { op: 'devToggle' }, LOCAL).enabled, true, '不传 on 则取反');
+  assert.equal(handleDev(lobby, SESSION, { op: 'devStatus' }, LOCAL).ok, true, 'devStatus 永远可用');
 });
 
-test('门禁：只有 solo 单人房可用（多人房拒绝）', () => {
-  for (const mode of ['coop', 'multi', 'funny']) {
-    const lobby = fakeLobby({ mode });
-    const res = handleDev(lobby, session, { op: 'funds', n: 999 }, { isLocal: true });
-    assert.equal(res.error, 'BAD_TARGET', `${mode} 房被拒`);
-    assert.equal(lobby._ps.funds, 10, `${mode} 房资金没被动过`);
-  }
-});
-
-test('门禁：不在房间 / 对局未开始 / 没有自己的 PlayerState 都拒绝', () => {
-  const noRoom = { roomOf: () => null };
-  assert.equal(handleDev(noRoom, session, { op: 'funds', n: 1 }, { isLocal: true }).error, 'BAD_TARGET');
-
-  const notStarted = fakeLobby({ started: false });
-  assert.equal(handleDev(notStarted, session, { op: 'funds', n: 1 }, { isLocal: true }).error, 'BAD_TARGET');
-
-  const noPs = fakeLobby({ ps: null });
-  assert.equal(handleDev(noPs, session, { op: 'funds', n: 1 }, { isLocal: true }).error, 'BAD_TARGET');
-
-  // 别人的座位：session.playerId 不在 match.players 里 → 拒绝
-  const other = fakeLobby();
-  assert.equal(handleDev(other, { playerId: 'someone-else' }, { op: 'funds', n: 1 }, { isLocal: true }).error, 'BAD_TARGET');
-});
-
-test('门禁：参数非法（缺整数 / 未知 op）拒绝，且不产生副作用', () => {
+test('来源：默认不再限制本机/内网（未开开关时仍拒）', () => {
   const lobby = fakeLobby();
-  for (const msg of [{ op: 'funds' }, { op: 'funds', n: 'x' }, { op: 'funds', n: 1.5e400 }, { op: 'nope' }, {}]) {
-    const res = handleDev(lobby, session, msg, { isLocal: true });
-    assert.ok(res.error, `拒绝 ${JSON.stringify(msg)}`);
+  const remote = { isLocal: false, ip: '1.2.3.4' };
+  assert.match(handleDev(lobby, SESSION, { op: 'funds', n: 1 }, remote).detail ?? '', /开关未开启/);
+  withDev(lobby);
+  assert.equal(handleDev(lobby, SESSION, { op: 'funds', n: 5 }, remote).ok, true, '公网来源在开关开启后可用');
+  assert.equal(lobby._ps.funds, 15);
+  const st = handleDev(lobby, SESSION, { op: 'devStatus' }, remote);
+  assert.equal(st.fromLocal, false);
+  assert.equal(st.ip, '1.2.3.4');
+  assert.equal(st.localOnly, false, '默认不限制本机');
+});
+
+test('房间：默认只允许 solo（coop 即使开了开关也被拒）', () => {
+  const lobby = withDev(fakeLobby({ mode: 'coop' }));
+  const res = handleDev(lobby, SESSION, { op: 'funds', n: 1 }, LOCAL);
+  assert.equal(res.error, 'BAD_TARGET');
+  assert.match(res.detail ?? '', /solo rooms only/);
+});
+
+test('身份：不在房间 / 对局未开始 / 没有自己的座位 都拒绝', () => {
+  assert.equal(handleDev({ roomOf: () => null }, SESSION, { op: 'devStatus' }, LOCAL).error, 'BAD_TARGET');
+  assert.equal(handleDev(withDev(fakeLobby({ started: false })), SESSION, { op: 'funds', n: 1 }, LOCAL).error, 'BAD_TARGET');
+  assert.equal(handleDev(withDev(fakeLobby({ ps: null })), SESSION, { op: 'funds', n: 1 }, LOCAL).error, 'BAD_TARGET');
+  assert.equal(handleDev(withDev(fakeLobby()), { playerId: 'someone-else' }, { op: 'funds', n: 1 }, LOCAL).error, 'BAD_TARGET');
+});
+
+test('参数：非法参数（缺整数 / 未知 op）拒绝，且无副作用', () => {
+  const lobby = withDev(fakeLobby());
+  for (const msg of [{ op: 'funds' }, { op: 'funds', n: 'x' }, { op: 'nope' }, {}]) {
+    assert.ok(handleDev(lobby, SESSION, msg, LOCAL).error, `拒绝 ${JSON.stringify(msg)}`);
   }
   assert.equal(lobby._ps.funds, 10, '没有副作用');
   assert.equal(lobby._ps.calls.length, 0, '没有任何方法被调用');
 });
 
-// ── 正常功能（本机 + solo）──────────────────────────────────────────────────
+// ── 操作 ─────────────────────────────────────────────────────────────────────
 
-test('state：返回自己的资金 / 商店 / 盟约层数 / 自选已选干员', () => {
+test('state：返回资金 / 商店 / 盟约层数 / 已知盟约 / 自选已选干员', () => {
   const ps = fakePlayer({ funds: 42, shopLevel: 3 });
   ps.layers.egirShip = 7;
-  const res = handleDev(fakeLobby({ ps }), session, { op: 'state' }, { isLocal: true });
+  const res = handleDev(withDev(fakeLobby({ ps })), SESSION, { op: 'state' }, LOCAL);
   assert.equal(res.ok, true);
   assert.equal(res.funds, 42);
   assert.equal(res.shopLevel, 3);
   assert.equal(res.maxShopLevel, 6);
   assert.deepEqual(res.layers, { egirShip: 7 });
-  assert.equal(res.diy.chess_char_6_diy1_a, 'char_4217_makoto', '能看到自选槽里选的是他');
+  assert.ok(Array.isArray(res.knownBonds) && res.knownBonds.includes('egirShip'), '给出已知盟约');
+  assert.equal(res.diy.chess_char_6_diy1_a, 'char_4217_makoto');
 });
 
-test('funds：加资金（这正是"免抽卡"要的）', () => {
+test('funds：加资金（走游戏自己的 addFunds）', () => {
   const ps = fakePlayer({ funds: 10 });
-  const res = handleDev(fakeLobby({ ps }), session, { op: 'funds', n: 500 }, { isLocal: true });
+  const res = handleDev(withDev(fakeLobby({ ps })), SESSION, { op: 'funds', n: 500 }, LOCAL);
   assert.equal(res.ok, true);
   assert.equal(res.added, 500);
   assert.equal(res.funds, 510);
-  assert.deepEqual(ps.calls[0], ['addFunds', 500, { reason: 'dev' }], '走的是游戏自己的 addFunds');
+  assert.deepEqual(ps.calls[0], ['addFunds', 500, { reason: 'dev' }]);
 });
 
 test('level：升级商店走游戏自己的价格与上限（照常发每级奖励）', () => {
   const ps = fakePlayer({ funds: 100, shopLevel: 1, maxShopLevel: 4, upgradePrice: 4 });
-  const res = handleDev(fakeLobby({ ps }), session, { op: 'level', n: 5 }, { isLocal: true });
+  const res = handleDev(withDev(fakeLobby({ ps })), SESSION, { op: 'level', n: 5 }, LOCAL);
   assert.equal(res.ok, true);
   assert.equal(res.from, 1);
   assert.equal(res.level, 4, '到上限就停');
-  assert.equal(res.stopped, 'MAX_LEVEL', '并报告停下的原因');
+  assert.equal(res.stopped, 'MAX_LEVEL');
   assert.equal(ps.funds, 100 - 4 * 3, '按每次升级的价格扣钱');
-  assert.equal(ps.calls.filter((c) => c[0] === 'levelUp').length, 3, '调了 3 次 levelUp');
+  assert.equal(ps.calls.filter((c) => c[0] === 'levelUp').length, 3);
 });
 
 test('level：钱不够时停下并报 NO_FUNDS（不静默加等级）', () => {
   const ps = fakePlayer({ funds: 5, shopLevel: 1, maxShopLevel: 6, upgradePrice: 4 });
-  const res = handleDev(fakeLobby({ ps }), session, { op: 'level', n: 3 }, { isLocal: true });
+  const res = handleDev(withDev(fakeLobby({ ps })), SESSION, { op: 'level', n: 3 }, LOCAL);
   assert.equal(res.level, 2, '只升得起一级');
   assert.equal(res.stopped, 'NO_FUNDS');
   assert.equal(ps.funds, 1);
 });
 
-test('layers / layersAll：加盟约层数（未激活也能加，用 requireActive:false）', () => {
+test('layers / layersAll：加盟约层数（未激活也能加）', () => {
   const ps = fakePlayer({ bondIds: ['egirShip', 'siracusaShip'] });
-  const one = handleDev(fakeLobby({ ps }), session, { op: 'layers', bondId: 'egirShip', n: 9 }, { isLocal: true });
-  assert.equal(one.ok, true);
+  const lobby = withDev(fakeLobby({ ps }));
+  const one = handleDev(lobby, SESSION, { op: 'layers', bondId: 'egirShip', n: 9 }, LOCAL);
   assert.equal(one.layers, 9);
   assert.deepEqual(ps.calls.at(-1), ['addLayers', 'egirShip', 9, { requireActive: false, reason: 'dev' }]);
-
-  const all = handleDev(fakeLobby({ ps }), session, { op: 'layersAll', n: 3 }, { isLocal: true });
-  assert.equal(all.ok, true);
+  const all = handleDev(lobby, SESSION, { op: 'layersAll', n: 3 }, LOCAL);
   assert.equal(all.count, 2);
   assert.equal(ps.layers.egirShip, 12);
   assert.equal(ps.layers.siracusaShip, 3);
 });
 
+test('setLayers：直接设成指定层数（可增可减；设相同值不变）', () => {
+  const ps = fakePlayer({ bondIds: ['egirShip'] });
+  const lobby = withDev(fakeLobby({ ps }));
+  let res = handleDev(lobby, SESSION, { op: 'setLayers', bondId: 'egirShip', n: 12 }, LOCAL);
+  assert.equal(res.from, 0);
+  assert.equal(res.to, 12);
+  res = handleDev(lobby, SESSION, { op: 'setLayers', bondId: 'egirShip', n: 3 }, LOCAL);
+  assert.equal(res.to, 3, '减到 3 层');
+  assert.ok(ps.calls.some((c) => c[0] === 'recompute'), '减层后调了 recompute');
+  res = handleDev(lobby, SESSION, { op: 'setLayers', bondId: 'egirShip', n: 3 }, LOCAL);
+  assert.equal(res.to, 3);
+  assert.equal(res.capped, false);
+  assert.ok(handleDev(lobby, SESSION, { op: 'setLayers', bondId: 'egirShip', n: -1 }, LOCAL).error);
+  assert.ok(handleDev(lobby, SESSION, { op: 'setLayers', n: 5 }, LOCAL).error);
+});
+
 test('refresh：加免费刷新次数', () => {
   const ps = fakePlayer();
-  const res = handleDev(fakeLobby({ ps }), session, { op: 'refresh' }, { isLocal: true });
+  const res = handleDev(withDev(fakeLobby({ ps })), SESSION, { op: 'refresh' }, LOCAL);
   assert.equal(res.ok, true);
   assert.equal(ps.shop.freeRefreshes, 1);
 });
 
-test('setLayers：把某盟约直接设成指定层数（可增可减，超出上限会报 capped）', () => {
-  const ps = fakePlayer({ bondIds: ['egirShip', 'siracusaShip'] });
-  const lobby = fakeLobby({ ps });
-  // 增
-  let res = handleDev(lobby, session, { op: 'setLayers', bondId: 'egirShip', n: 12 }, { isLocal: true });
-  assert.equal(res.ok, true);
-  assert.equal(res.from, 0);
-  assert.equal(res.to, 12, '设成 12 层');
-  // 减（直接写回并重算）
-  res = handleDev(lobby, session, { op: 'setLayers', bondId: 'egirShip', n: 3 }, { isLocal: true });
-  assert.equal(res.to, 3, '减到 3 层');
-  assert.ok(ps.calls.some((c) => c[0] === 'recompute'), '减层后调了 recompute');
-  // 设成相同值：不变
-  res = handleDev(lobby, session, { op: 'setLayers', bondId: 'egirShip', n: 3 }, { isLocal: true });
-  assert.equal(res.to, 3);
-  assert.equal(res.capped, false);
-  // 参数校验
-  assert.ok(handleDev(lobby, session, { op: 'setLayers', bondId: 'egirShip', n: -1 }, { isLocal: true }).error);
-  assert.ok(handleDev(lobby, session, { op: 'setLayers', n: 5 }, { isLocal: true }).error);
-});
-
-test('pick：把自选槽换成指定干员（走游戏自己的 setDiy）', () => {
+test('pick：把自选槽换成指定干员（走 setDiy + 刷新库存）', () => {
   const ps = fakePlayer();
-  const lobby = fakeLobby({ ps });
-  const res = handleDev(lobby, session,
-    { op: 'pick', slot: 'chess_char_6_diy1_a', charId: 'char_4217_makoto', skillIndex: 2 }, { isLocal: true });
+  const lobby = withDev(fakeLobby({ ps }));
+  const res = handleDev(lobby, SESSION,
+    { op: 'pick', slot: 'chess_char_6_diy1_a', charId: 'char_4217_makoto', skillIndex: 2 }, LOCAL);
   assert.equal(res.ok, true);
   const call = ps.calls.find((c) => c[0] === 'setDiy');
-  assert.ok(call, '调了 setDiy');
-  assert.deepEqual(call[1].chess_char_6_diy1_a, { charId: 'char_4217_makoto', skillIndex: 2, uniEquipId: null }, 'pick 内容');
-  assert.ok(ps.calls.some((c) => c[0] === 'initDiyStock'), '并刷新了自选库存');
+  assert.deepEqual(call[1].chess_char_6_diy1_a, { charId: 'char_4217_makoto', skillIndex: 2, uniEquipId: null });
+  assert.ok(ps.calls.some((c) => c[0] === 'initDiyStock'), '刷新自选库存');
   assert.equal(res.diy.chess_char_6_diy1_a, 'char_4217_makoto');
-  // 不在池子里的干员要被拒
-  const bad = handleDev(lobby, session, { op: 'pick', slot: 'chess_char_6_diy1_a', charId: 'char_999_nope' }, { isLocal: true });
-  assert.equal(bad.error, 'BAD_TARGET', '池外的干员被拒');
+  assert.equal(handleDev(lobby, SESSION, { op: 'pick', slot: 'chess_char_6_diy1_a', charId: 'char_999_nope' }, LOCAL).error,
+    'BAD_TARGET', '池外干员被拒');
 });
 
-test('opPool：返回自选池清单（面板做下拉用）', () => {
-  const ps = fakePlayer();
-  const res = handleDev(fakeLobby({ ps }), session, { op: 'opPool' }, { isLocal: true });
+test('opPool：返回自选池清单（面板下拉用）', () => {
+  const res = handleDev(withDev(fakeLobby()), SESSION, { op: 'opPool' }, LOCAL);
   assert.equal(res.ok, true);
   assert.equal(res.count, 2);
   assert.equal(res.ops[0].charId, 'char_4217_makoto');
@@ -210,16 +222,10 @@ test('opPool：返回自选池清单（面板做下拉用）', () => {
   assert.deepEqual(res.ops[0].bonds, ['lateranoShip', 'raidShip']);
 });
 
-test('ops：返回自选槽清单 + 当前的房间模式与放宽开关状态', () => {
-  const res = handleDev(fakeLobby(), session, { op: 'ops' }, { isLocal: true });
+test('ops：返回自选槽清单 + 房间信息与放宽开关状态', () => {
+  const res = handleDev(withDev(fakeLobby()), SESSION, { op: 'ops' }, LOCAL);
   assert.equal(res.ok, true);
   assert.equal(res.ops.room, 'solo');
   assert.equal(res.ops.anyRoom, false, '默认不放宽（需 DSH_DEV_ANY_ROOM=1）');
-  assert.ok(res.ops.slots.some((s) => s.slot === 'chess_char_6_diy1_a' && s.tier === 6), '列出六阶自选槽');
-});
-
-test('放宽开关默认关闭：非 solo 房仍被拒', () => {
-  const res = handleDev(fakeLobby({ mode: 'coop' }), session, { op: 'funds', n: 1 }, { isLocal: true });
-  assert.equal(res.error, 'BAD_TARGET', '未设 DSH_DEV_ANY_ROOM 时 coop 房被拒');
-  assert.match(res.detail ?? '', /solo rooms only/);
+  assert.ok(res.ops.slots.some((s) => s.slot === 'chess_char_6_diy1_a' && s.tier === 6));
 });

@@ -1,55 +1,107 @@
-// server/match/dev.js — [CUSTOM] 测试后门（仅本机/内网 + solo 单人房）。
+// server/match/dev.js — [CUSTOM] 测试后门（单人房里一个可切换开关）。
 //
 // 用途：不用刷就能验证某个干员的 kit（尤其自选干员结城理）。
 //
-// 安全边界（按需求"只对本机/内网 + solo 单人房生效"）：
-//   1) 来源必须是**本机/内网**：net.js 的 clientAddress 算出的 conn.ip 交给 isLocalIp 判定
-//      （回环 / RFC1918 / link-local / CGNAT-Tailscale / IPv6 ULA），由 lobby 经 ctx.isLocal 传进来
-//   2) 房间必须是 **solo 单人房**：这条会改经济状态，不能污染多人对局
-//   3) 只能作用于**调用者自己的座位**：拿不到自己的 PlayerState 就拒绝
-//   三条任一不满足 → ERR.BAD_TARGET，且不回显任何服务器内部信息。
+// ⚠️ 门禁与风险（按需求改过，请注意）：
+//   0) **运行时开关**：每个房间一个 dev 开关，**默认关闭**。所有会改状态的操作都要求它开着
+//      （开启/查询开关本身不需要）。开关只存在于内存，服务重启即复位为关闭。
+//   1) 来源：**默认不再限制本机/内网**（按需求"不需要本机内网"，方便朋友在公网对局里也用）。
+//      想收回可用 DSH_DEV_LOCAL_ONLY=1 启动服务，即恢复"仅本机/内网"。
+//      调用者的 ip 会随每次操作记进状态，便于事后追查。
+//   2) 房间：默认只允许 **solo 单人房**（改经济状态不该污染多人对局）；
+//      共测要放开可用 DSH_DEV_ANY_ROOM=1。
+//   3) 身份：只能作用于**调用者自己的座位**。
+//   4) 想彻底禁用后门：启动服务时带 DSH_DEV_DISABLED=1（此时连开关本身都不给用）。
 //
 // 协议：客户端发 `{ t: 'dev', op: '<name>', ...参数 }`；成功返回 `{ ok: true, ... }`。
-// op 一览（都作用于调用者自己的 PlayerState）：
-//   state             读自己的状态（资金 / 商店等级与升级价 / 各盟约层数 / 自选槽已选干员）
+// op 一览（除 devToggle/devStatus 外，都要求开关已开启，且只作用于自己的 PlayerState）：
+//   devToggle on?     开/关本房间的后门开关（不传 on 则取反）
+//   devStatus         读开关状态 + 来源/房间信息（不需要开关已开）
+//   state             读自己的状态（资金 / 商店等级与升级价 / 各盟约层数 / 自选槽已选干员 / 已知盟约）
 //   funds   n         加资金
 //   level   n         升级商店 n 次（用游戏自己的价格与上限，每级照常发免费干员奖励）
 //   refresh           免费刷新一次商店
 //   layers  bondId n  给某盟约加 n 层（requireActive:false，未激活也可加）
 //   layersAll n       给"当前局面涉及的所有盟约"各加 n 层
+//   setLayers bondId n 把某盟约直接设成 n 层（可增可减）
+//   pick slot charId [skillIndex]  把自选槽换成指定干员
+//   opPool            自选池清单
+//   ops               自选槽清单 + 房间信息
 //
 // 撤销：node tools/revert-dev-backdoor.mjs
 
 import { ERR } from '../../shared/constants.js';
 import { OK, fail } from './player/common.js';
 
+/** DSH_DEV_DISABLED=1 ⇒ 彻底禁用（连开关都不可用）。 */
+const DEV_DISABLED = String(process.env.DSH_DEV_DISABLED || '') === '1';
+/** DSH_DEV_LOCAL_ONLY=1 ⇒ 恢复"仅本机/内网"限制（默认不限制）。 */
+const LOCAL_ONLY = String(process.env.DSH_DEV_LOCAL_ONLY || '') === '1';
+/** DSH_DEV_ANY_ROOM=1 ⇒ 放宽房间限制（默认只允许 solo）。 */
+const ANY_ROOM = String(process.env.DSH_DEV_ANY_ROOM || '') === '1';
+/** DSH_DEV_DEFAULT_ON=1 ⇒ 房间开关开局即为开（默认关闭，需在面板里点开）。 */
+const DEFAULT_ON = String(process.env.DSH_DEV_DEFAULT_ON || '') === '1';
+
+/**
+ * 每个房间一个开关，直接记在 room 上（`room.devEnabled`；内存态，服务重启复位）。
+ * 存属性而不是 WeakMap：更好排查（日志/调试能直接看到），测试也能直接置位。
+ */
+const devOn = (room) => (room.devEnabled === undefined ? DEFAULT_ON : !!room.devEnabled);
+
 /**
  * @param {import('../lobby.js').Lobby} lobby
  * @param {import('../net.js').Session} session
  * @param {any} msg
- * @param {{ isLocal?: boolean }} [ctx] 来源是否为本机/内网（net.js 依据 conn.ip 传入）
+ * @param {{ isLocal?: boolean, ip?: string|null }} [ctx] 来源信息（net.js 依据 conn.ip 传入）
  * @returns {{ ok: true, [k: string]: any } | { error: string, detail?: string }}
  */
-/** 放宽项：DSH_DEV_ANY_ROOM=1 时不再要求 solo 房间（默认仍然只允许 solo）。 */
-const ANY_ROOM = String(process.env.DSH_DEV_ANY_ROOM || '') === '1';
-
 export function handleDev(lobby, session, msg, ctx = {}) {
-  // ── 1) 来源：只允许本机 / 内网（这条是安全底线，不提供开关）───────────────────
-  if (!ctx.isLocal) return fail(ERR.BAD_TARGET, 'dev: local/LAN only');
+  const op = String(msg.op ?? '');
+
+  // ── 0) 彻底禁用 ─────────────────────────────────────────────────────────────
+  if (DEV_DISABLED) return fail(ERR.BAD_TARGET, 'dev: disabled by DSH_DEV_DISABLED');
 
   const room = lobby.roomOf(session);
   if (!room) return fail(ERR.BAD_TARGET, 'dev: not in a room');
-  // ── 2) 房间：默认只允许 solo；共测可用 DSH_DEV_ANY_ROOM=1 放宽到任意房型 ──────
+  const match = room.match;
+
+  // 开关状态（不需要开关已开，也不要求对局已开始）
+  const status = () => ({
+    ok: true,
+    enabled: devOn(room),
+    room: room.mode ?? null,
+    localOnly: LOCAL_ONLY,
+    anyRoom: ANY_ROOM,
+    defaultOn: DEFAULT_ON,
+    fromLocal: !!ctx.isLocal,
+    ip: ctx.ip ?? null,
+    started: !!match,
+  });
+
+  if (op === 'devStatus') return status();
+  if (op === 'devToggle') {
+    // ── 1) 来源限制：默认不限；DSH_DEV_LOCAL_ONLY=1 时恢复 ──────────────────────
+    if (LOCAL_ONLY && !ctx.isLocal) return fail(ERR.BAD_TARGET, 'dev: local/LAN only (DSH_DEV_LOCAL_ONLY=1)');
+    const want = typeof msg.on === 'boolean' ? msg.on : !devOn(room);
+    room.devEnabled = want;
+    return { ...status(), enabled: want, toggled: true };
+  }
+
+  // 以下是会改状态的操作：来源/房间/开关/身份 四道检查
+  if (LOCAL_ONLY && !ctx.isLocal) return fail(ERR.BAD_TARGET, 'dev: local/LAN only (DSH_DEV_LOCAL_ONLY=1)');
+  if (!devOn(room)) return fail(ERR.BAD_TARGET, 'dev: 后门开关未开启（先在面板点「开启后门」）');
+  // ── 2) 房间：默认只允许 solo；DSH_DEV_ANY_ROOM=1 放宽 ────────────────────────
   if (room.mode !== 'solo' && !ANY_ROOM) {
     return fail(ERR.BAD_TARGET, 'dev: solo rooms only（共测请用 DSH_DEV_ANY_ROOM=1 启动服务）');
   }
-  const match = room.match;
   if (!match) return fail(ERR.BAD_TARGET, 'dev: the match has not started');
   // ── 3) 身份：只允许自己的座位 ────────────────────────────────────────────────
   const ps = match.players?.get?.(session.playerId) ?? null;
   if (!ps) return fail(ERR.BAD_TARGET, 'dev: no player state');
 
-  const op = String(msg.op ?? '');
+  // 记一下调用者 ip（便于事后追查；不阻断）
+  if (ctx.ip) (match.devLog ??= []).push({ t: op, ip: ctx.ip, at: match.time ?? null });
+
   if (op === 'state') return { ok: true, ...snapshot(ps) };
   if (op === 'ops') return { ok: true, ops: listOps(match, room) };
 

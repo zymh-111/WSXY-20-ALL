@@ -420,7 +420,8 @@ export const C2S = {
   dev: { op: (v) => typeof v === 'string' && v.length > 0 && v.length <= 32, n: (v) => v == null || Number.isSafeInteger(v),
     bondId: (v) => v == null || (typeof v === 'string' && v.length <= 64), slot: (v) => v == null || (typeof v === 'string' && v.length <= 64),
     skillIndex: (v) => v == null || (Number.isInteger(v) && v >= 0 && v <= 3), uniEquipId: (v) => v == null || (typeof v === 'string' && v.length <= 64),
-    $optional: ['n', 'bondId', 'slot', 'skillIndex', 'uniEquipId'] },
+    on: (v) => v == null || typeof v === 'boolean',
+    $optional: ['n', 'bondId', 'slot', 'skillIndex', 'uniEquipId', 'on'] },
 
   // match
   'g.infoReady': {},
