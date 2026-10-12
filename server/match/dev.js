@@ -30,14 +30,19 @@ import { OK, fail } from './player/common.js';
  * @param {{ isLocal?: boolean }} [ctx] 来源是否为本机/内网（net.js 依据 conn.ip 传入）
  * @returns {{ ok: true, [k: string]: any } | { error: string, detail?: string }}
  */
+/** 放宽项：DSH_DEV_ANY_ROOM=1 时不再要求 solo 房间（默认仍然只允许 solo）。 */
+const ANY_ROOM = String(process.env.DSH_DEV_ANY_ROOM || '') === '1';
+
 export function handleDev(lobby, session, msg, ctx = {}) {
-  // ── 1) 来源：只允许本机 / 内网 ───────────────────────────────────────────────
+  // ── 1) 来源：只允许本机 / 内网（这条是安全底线，不提供开关）───────────────────
   if (!ctx.isLocal) return fail(ERR.BAD_TARGET, 'dev: local/LAN only');
 
   const room = lobby.roomOf(session);
   if (!room) return fail(ERR.BAD_TARGET, 'dev: not in a room');
-  // ── 2) 房间：只允许 solo 单人房 ──────────────────────────────────────────────
-  if (room.mode !== 'solo') return fail(ERR.BAD_TARGET, 'dev: solo rooms only');
+  // ── 2) 房间：默认只允许 solo；共测可用 DSH_DEV_ANY_ROOM=1 放宽到任意房型 ──────
+  if (room.mode !== 'solo' && !ANY_ROOM) {
+    return fail(ERR.BAD_TARGET, 'dev: solo rooms only（共测请用 DSH_DEV_ANY_ROOM=1 启动服务）');
+  }
   const match = room.match;
   if (!match) return fail(ERR.BAD_TARGET, 'dev: the match has not started');
   // ── 3) 身份：只允许自己的座位 ────────────────────────────────────────────────
@@ -46,6 +51,7 @@ export function handleDev(lobby, session, msg, ctx = {}) {
 
   const op = String(msg.op ?? '');
   if (op === 'state') return { ok: true, ...snapshot(ps) };
+  if (op === 'ops') return { ok: true, ops: listOps(match, room) };
 
   switch (op) {
     case 'funds': {
@@ -89,12 +95,74 @@ export function handleDev(lobby, session, msg, ctx = {}) {
       for (const id of ids) ps.addLayers(id, n, { requireActive: false, reason: 'dev' });
       return { ok: true, count: ids.length };
     }
+    case 'setLayers': {
+      // 直接设成指定层数（可增可减）；层数上限由 layerGainRoom 决定（超出时报 unchanged 而不是假装成功）
+      const n = reqInt(msg, 'n');
+      const bondId = String(msg.bondId ?? '');
+      if (n === null) return fail(ERR.BAD_MSG, 'dev: setLayers needs an integer n');
+      if (n < 0) return fail(ERR.BAD_MSG, 'dev: setLayers needs n >= 0');
+      if (!bondId) return fail(ERR.BAD_MSG, 'dev: setLayers needs bondId');
+      const before = ps.layers?.[bondId] ?? 0;
+      let after = before;
+      if (n > before) {
+        ps.addLayers(bondId, n - before, { requireActive: false, reason: 'dev' });
+        after = ps.layers?.[bondId] ?? before;
+      } else if (n < before) {
+        ps.layers[bondId] = n;
+        ps.recompute?.();
+        after = ps.layers?.[bondId] ?? n;
+      }
+      return { ok: true, bondId, from: before, to: after, capped: after !== n };
+    }
+    case 'pick': {
+      // 自选干员：把某个自选槽换成指定 charId（走游戏自己的 setDiy → 校验 + 重建记录）
+      const slot = String(msg.slot ?? '');
+      const charId = String(msg.charId ?? '');
+      if (!slot) return fail(ERR.BAD_MSG, 'dev: pick needs slot（如 chess_char_6_diy1_a）');
+      if (!charId) return fail(ERR.BAD_MSG, 'dev: pick needs charId');
+      const pool = match.gd?.raw?.diy?.ownedPool ?? [];
+      if (pool.length && !pool.includes(charId)) return fail(ERR.BAD_TARGET, `dev: ${charId} is not in the 自选 ownedPool`);
+      const picks = { ...(ps.diy ?? {}) };
+      picks[slot] = { charId, skillIndex: reqInt(msg, 'skillIndex') ?? 0, uniEquipId: msg.uniEquipId ? String(msg.uniEquipId) : null };
+      const ok = ps.setDiy?.(picks);
+      if (!ok) return fail(ERR.BAD_TARGET, 'dev: setDiy refused（槽位/干员不合法，或该干员没有 kit）');
+      // 刷新自选库存，商店才会按新配置出牌
+      try { ps.initDiyStock?.(new Set(match.bannedBondIds ?? [])); } catch { /* 兼容旧签名 */ }
+      ps.dirty?.();
+      return { ok: true, slot, charId, diy: snapshot(ps).diy };
+    }
+    case 'opPool': {
+      const data = match.gd?.raw ?? null;
+      const pool = data?.diy?.ownedPool ?? [];
+      const ops = pool.map((id) => {
+        const o = data?.diy?.operators?.[id] ?? {};
+        return { charId: id, name: o.name ?? id, profession: o.profession ?? null, bonds: o.bonds ?? [] };
+      });
+      return { ok: true, count: ops.length, ops };
+    }
     default:
       return fail(ERR.BAD_MSG, `dev: unknown op ${op.slice(0, 32)}`);
   }
 }
 
+/** 自选槽清单（客户端面板用来做下拉）。 */
+function listOps(match, room) {
+  const data = match.gd?.raw ?? null;
+  const slots = data?.diy?.slots ?? {};
+  return {
+    slots: Object.entries(slots).map(([id, s]) => ({ slot: id, tier: s.tier, shopLevel: s.shopLevel })),
+    room: room?.mode ?? null,
+    anyRoom: ANY_ROOM,
+  };
+}
+
 const reqInt = (msg, k) => (Number.isFinite(msg[k]) ? Math.trunc(msg[k]) : null);
+
+/** 本局已知的盟约 id（当前激活的 + 自己已有的层数，去重排序）——面板用来做下拉。 */
+function knownBonds(ps) {
+  const ids = new Set([...Object.keys(ps.bonds ?? {}), ...Object.keys(ps.layers ?? {})]);
+  return [...ids].sort();
+}
 
 /** 自己的状态快照（只回自己的东西，方便客户端面板与排错）。 */
 function snapshot(ps) {
@@ -109,6 +177,7 @@ function snapshot(ps) {
     freeRefreshes: ps.shop?.freeRefreshes ?? 0,
     maxShopLevel: ps.gd?.maxShopLevel ?? null,
     layers,
+    knownBonds: knownBonds(ps),
     diy,
     standIns: (ps.standIns ?? []).length,
   };

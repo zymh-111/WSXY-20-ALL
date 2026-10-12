@@ -140,6 +140,33 @@ test('S3 与海为敌: 10 bullets, normal attacks are free, an 侵蚀爆发 lock
   assert.equal(elem[0].dmg.element, 'erosion');
   checkInvariants(h.b);
 });
+test('S3 反自触发：她自己齐射造成的侵蚀爆发不得再触发齐射（否则连环、连扣弹药）', () => {
+  // 官方：当全场有**敌人**侵蚀损伤爆发时消耗 1 发弹药 —— 只认外部爆发。
+  // 齐射里那段 ep_damage_scale 元素伤害会填元素条；若不排除『由她自己造成的爆发』，
+  // 就会爆发→齐射→再爆发→再齐射无限套娃（实测未修时：一次外部爆发放大成 3 次齐射、连扣 3 发）。
+  // 这条守住 kit 里的 `if (source === unit) return;`。
+  const h = mk({ seed: 15, units: [{ chessId: CHESS_E, row: 10, col: 3, skillIndex: 2 }] });
+  const u = ready(h);
+  const foe = h.spawn('enemy_dummy', { pos: [10, 5] });
+  assert.equal(u.skill.activate('test', { free: true }), true, 'S3 activated');
+  // ① 由她自己造成的爆发 → 不打标记、不扣弹药
+  const ammo0 = u.skill.ammoLeft;
+  h.b.emit('elementBurst', { source: u, target: foe, element: 'erosion' });
+  assert.equal(u.mem.clemntBombs.marks.size, 0, '自触发不打标记');
+  h.step(1);
+  assert.equal(u.skill.ammoLeft, ammo0, '自触发不消耗弹药');
+  // ② 外部（敌人身上的）爆发 → 正常触发一次齐射、只扣 1 发
+  h.b.emit('elementBurst', { source: foe, target: foe, element: 'erosion' });
+  assert.equal(u.mem.clemntBombs.marks.size, 1, '外部爆发打标记');
+  h.run(0.2);
+  assert.equal(u.skill.ammoLeft, ammo0 - 1, '一次齐射只扣 1 发弹药');
+  h.run(3);
+  assert.equal(u.skill.ammoLeft, ammo0 - 1, '齐射过程中不再被自触发多扣');
+  const bombs = h.hooksOf('damaged').filter((c) => c.dmg.tags?.includes('clemnt:bomb'));
+  assert.equal(bombs.filter((c) => c.type === 'phys').length, 3, '恰好 3 段物理');
+  assert.equal(bombs.filter((c) => c.type === 'elemental').length, 3, '恰好 3 段元素伤害');
+  checkInvariants(h.b);
+});
 
 test('talent 生死定夺: physical damage is scaled up when the roll is below the chance', () => {
   const h = mk({ seed: 14, units: [{ chessId: CHESS_E, row: 10, col: 3 }] });

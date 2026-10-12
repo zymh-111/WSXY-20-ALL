@@ -19,7 +19,10 @@ function fakePlayer({ funds = 10, shopLevel = 1, maxShopLevel = 6, upgradePrice 
     layers: {}, bonds: Object.fromEntries(bondIds.map((b) => [b, { active: false, layers: 0 }])),
     diy: { chess_char_6_diy1_a: { charId: 'char_4217_makoto', skillIndex: 0 } },
     standIns: [],
-    gd: { maxShopLevel, upgradeBase: () => upgradePrice },
+    gd: { maxShopLevel, upgradeBase: () => upgradePrice,
+      raw: { diy: { ownedPool: ['char_4217_makoto', 'char_112_siege'],
+        operators: { char_4217_makoto: { name: '结城理', profession: 'SPECIAL', bonds: ['lateranoShip', 'raidShip'] } },
+        slots: { chess_char_6_diy1_a: { tier: 6, shopLevel: 6 } } } } },
     addFunds(n, opts) { calls.push(['addFunds', n, opts]); this.funds += n; return n; },
     levelUp() {
       if (this.shop.level >= maxShopLevel) return { error: 'MAX_LEVEL' };
@@ -35,13 +38,16 @@ function fakePlayer({ funds = 10, shopLevel = 1, maxShopLevel = 6, upgradePrice 
       return n;
     },
     dirty() { calls.push(['dirty']); },
+    recompute() { calls.push(['recompute']); },
+    setDiy(picks) { calls.push(['setDiy', picks]); this.diy = { ...picks }; return true; },
+    initDiyStock() { calls.push(['initDiyStock']); },
   };
   return ps;
 }
 
 /** 假的房间 / 大厅 / 会话。 */
 function fakeLobby({ mode = 'solo', started = true, ps = fakePlayer(), playerId = 'p1' } = {}) {
-  const match = started ? { players: new Map(ps ? [[playerId, ps]] : []) } : null;
+  const match = started ? { players: new Map(ps ? [[playerId, ps]] : []), gd: ps?.gd ?? null } : null;
   const room = { mode, match };
   return { roomOf: () => room, _room: room, _ps: ps };
 }
@@ -155,4 +161,65 @@ test('refresh：加免费刷新次数', () => {
   const res = handleDev(fakeLobby({ ps }), session, { op: 'refresh' }, { isLocal: true });
   assert.equal(res.ok, true);
   assert.equal(ps.shop.freeRefreshes, 1);
+});
+
+test('setLayers：把某盟约直接设成指定层数（可增可减，超出上限会报 capped）', () => {
+  const ps = fakePlayer({ bondIds: ['egirShip', 'siracusaShip'] });
+  const lobby = fakeLobby({ ps });
+  // 增
+  let res = handleDev(lobby, session, { op: 'setLayers', bondId: 'egirShip', n: 12 }, { isLocal: true });
+  assert.equal(res.ok, true);
+  assert.equal(res.from, 0);
+  assert.equal(res.to, 12, '设成 12 层');
+  // 减（直接写回并重算）
+  res = handleDev(lobby, session, { op: 'setLayers', bondId: 'egirShip', n: 3 }, { isLocal: true });
+  assert.equal(res.to, 3, '减到 3 层');
+  assert.ok(ps.calls.some((c) => c[0] === 'recompute'), '减层后调了 recompute');
+  // 设成相同值：不变
+  res = handleDev(lobby, session, { op: 'setLayers', bondId: 'egirShip', n: 3 }, { isLocal: true });
+  assert.equal(res.to, 3);
+  assert.equal(res.capped, false);
+  // 参数校验
+  assert.ok(handleDev(lobby, session, { op: 'setLayers', bondId: 'egirShip', n: -1 }, { isLocal: true }).error);
+  assert.ok(handleDev(lobby, session, { op: 'setLayers', n: 5 }, { isLocal: true }).error);
+});
+
+test('pick：把自选槽换成指定干员（走游戏自己的 setDiy）', () => {
+  const ps = fakePlayer();
+  const lobby = fakeLobby({ ps });
+  const res = handleDev(lobby, session,
+    { op: 'pick', slot: 'chess_char_6_diy1_a', charId: 'char_4217_makoto', skillIndex: 2 }, { isLocal: true });
+  assert.equal(res.ok, true);
+  const call = ps.calls.find((c) => c[0] === 'setDiy');
+  assert.ok(call, '调了 setDiy');
+  assert.deepEqual(call[1].chess_char_6_diy1_a, { charId: 'char_4217_makoto', skillIndex: 2, uniEquipId: null }, 'pick 内容');
+  assert.ok(ps.calls.some((c) => c[0] === 'initDiyStock'), '并刷新了自选库存');
+  assert.equal(res.diy.chess_char_6_diy1_a, 'char_4217_makoto');
+  // 不在池子里的干员要被拒
+  const bad = handleDev(lobby, session, { op: 'pick', slot: 'chess_char_6_diy1_a', charId: 'char_999_nope' }, { isLocal: true });
+  assert.equal(bad.error, 'BAD_TARGET', '池外的干员被拒');
+});
+
+test('opPool：返回自选池清单（面板做下拉用）', () => {
+  const ps = fakePlayer();
+  const res = handleDev(fakeLobby({ ps }), session, { op: 'opPool' }, { isLocal: true });
+  assert.equal(res.ok, true);
+  assert.equal(res.count, 2);
+  assert.equal(res.ops[0].charId, 'char_4217_makoto');
+  assert.equal(res.ops[0].name, '结城理');
+  assert.deepEqual(res.ops[0].bonds, ['lateranoShip', 'raidShip']);
+});
+
+test('ops：返回自选槽清单 + 当前的房间模式与放宽开关状态', () => {
+  const res = handleDev(fakeLobby(), session, { op: 'ops' }, { isLocal: true });
+  assert.equal(res.ok, true);
+  assert.equal(res.ops.room, 'solo');
+  assert.equal(res.ops.anyRoom, false, '默认不放宽（需 DSH_DEV_ANY_ROOM=1）');
+  assert.ok(res.ops.slots.some((s) => s.slot === 'chess_char_6_diy1_a' && s.tier === 6), '列出六阶自选槽');
+});
+
+test('放宽开关默认关闭：非 solo 房仍被拒', () => {
+  const res = handleDev(fakeLobby({ mode: 'coop' }), session, { op: 'funds', n: 1 }, { isLocal: true });
+  assert.equal(res.error, 'BAD_TARGET', '未设 DSH_DEV_ANY_ROOM 时 coop 房被拒');
+  assert.match(res.detail ?? '', /solo rooms only/);
 });

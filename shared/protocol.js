@@ -417,7 +417,10 @@ export const C2S = {
   'room.removeSpectator': { playerId: isId },
   // [CUSTOM DEV_BACKDOOR] 测试后门：{ t:'dev', op, ...参数 } —— 仅本机/内网 + solo 单人房，
   // 服务端见 server/match/dev.js。字段校验只判类型，真正的门禁在服务端。
-  dev: { op: (v) => typeof v === 'string' && v.length > 0 && v.length <= 32, n: (v) => v == null || Number.isSafeInteger(v), bondId: (v) => v == null || (typeof v === 'string' && v.length <= 64), $optional: ['n', 'bondId'] },
+  dev: { op: (v) => typeof v === 'string' && v.length > 0 && v.length <= 32, n: (v) => v == null || Number.isSafeInteger(v),
+    bondId: (v) => v == null || (typeof v === 'string' && v.length <= 64), slot: (v) => v == null || (typeof v === 'string' && v.length <= 64),
+    skillIndex: (v) => v == null || (Number.isInteger(v) && v >= 0 && v <= 3), uniEquipId: (v) => v == null || (typeof v === 'string' && v.length <= 64),
+    $optional: ['n', 'bondId', 'slot', 'skillIndex', 'uniEquipId'] },
 
   // match
   'g.infoReady': {},

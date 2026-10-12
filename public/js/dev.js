@@ -38,6 +38,14 @@ const api = {
   refresh: () => dev('refresh'),
   layers: (bondId, n = 1) => dev('layers', { bondId, n }),
   layersAll: (n = 1) => dev('layersAll', { n }),
+  /** 直接设成指定层数（可增可减）。 */
+  setLayers: (bondId, n) => dev('setLayers', { bondId, n }),
+  /** 自选槽换成指定干员（槽位为空则用六阶 diy1）。 */
+  pick: (charId, slot = 'chess_char_6_diy1_a', skillIndex = 0) => dev('pick', { slot, charId, skillIndex }),
+  /** 自选池清单（面板下拉用）。 */
+  opPool: () => dev('opPool'),
+  /** 槽位与房间信息（含放宽开关状态）。 */
+  ops: () => dev('ops'),
   dev,
 };
 
@@ -80,15 +88,58 @@ function buildPanel() {
     return b;
   };
   const show = async () => {
-    try { const r = await api.state(); status.textContent = JSON.stringify(r, null, 1); }
-    catch (e) { status.textContent = String(e.message ?? e); }
+    try { const r = await api.state(); status.textContent = JSON.stringify(r, null, 1); return r; }
+    catch (e) { status.textContent = String(e.message ?? e); return null; }
   };
 
+  // ── 盟约层数：下拉选盟约 + 输入层数 → 直接设值 ──
+  const bondSel = el('select', { flex: '1', background: '#1d2a3a', color: '#d8e2ee', border: '1px solid #33475e', borderRadius: '4px', padding: '2px' });
+  const layerNum = el('input', { width: '52px', background: '#1d2a3a', color: '#d8e2ee', border: '1px solid #33475e', borderRadius: '4px', padding: '2px 4px' });
+  layerNum.value = '9';
+  const refreshBonds = async () => {
+    try {
+      const st = await api.state();
+      const ids = st.knownBonds ?? [];
+      bondSel.replaceChildren(...ids.map((id) => el('option', null, id)));
+      if (ids.includes('lateranoShip')) bondSel.value = 'lateranoShip';
+      else if (ids.includes('egirShip')) bondSel.value = 'egirShip';
+    } catch { /* 读不到就留空 */ }
+  };
+  refreshBonds();
+
+  // ── 自选干员：下拉选池子里的干员 → 塞进六阶自选槽 ──
+  const opSel = el('select', { flex: '1', background: '#1d2a3a', color: '#d8e2ee', border: '1px solid #33475e', borderRadius: '4px', padding: '2px' });
+  const slotSel = el('select', { width: '74px', background: '#1d2a3a', color: '#d8e2ee', border: '1px solid #33475e', borderRadius: '4px', padding: '2px' });
+  const refreshOps = async () => {
+    try {
+      const { ops } = await api.opPool();
+      opSel.replaceChildren(...ops.map((o) => {
+        const opt = el('option', null, o.name + '  (' + o.charId + ')');
+        opt.value = o.charId;
+        return opt;
+      }));
+      const mk = ops.find((o) => o.charId === 'char_4217_makoto');
+      if (mk) opSel.value = mk.charId;
+      const { ops: info } = await api.ops();
+      slotSel.replaceChildren(...(info.slots ?? []).filter((s) => s.tier >= 5).map((s) => {
+        const opt = el('option', null, 'T' + s.tier);
+        opt.value = s.slot;
+        return opt;
+      }));
+      if ([...slotSel.options].some((o) => o.value === 'chess_char_6_diy1_a')) slotSel.value = 'chess_char_6_diy1_a';
+    } catch { /* 读不到就留空 */ }
+  };
+  refreshOps();
+
   root.append(status);
-  root.append(row([btn('读状态', show), btn('+500 资金', () => api.funds(500))]));
+  root.append(row([btn('读状态', async () => { const r = await show(); await refreshBonds(); await refreshOps(); return r; }), btn('+500 资金', () => api.funds(500))]));
   root.append(row([btn('+1 等级', () => api.level(1)), btn('+5 等级', () => api.level(5)), btn('免费刷新', () => api.refresh())]));
-  root.append(row([btn('+9 拉特兰层', () => api.layers('lateranoShip', 9)), btn('全盟约 +3', () => api.layersAll(3))]));
-  root.append(el('div', { marginTop: '6px', color: '#7b8ea3' }, '仅本机/内网 + solo 单人房'));
+  root.append(row([bondSel, layerNum, btn('设层数', () => api.setLayers(bondSel.value, Number(layerNum.value) || 0))]));
+  root.append(row([btn('全盟约 +3', () => api.layersAll(3))]));
+  root.append(el('div', { marginTop: '6px', color: '#8fd0ff' }, '自选干员 → 塞进槽位（选完点“塞入”）'));
+  root.append(row([slotSel, opSel]));
+  root.append(row([btn('塞入', () => api.pick(opSel.value, slotSel.value))]));
+  root.append(el('div', { marginTop: '6px', color: '#7b8ea3' }, '仅本机/内网；房间默认限 solo'));
   root.append(log);
   return root;
 }

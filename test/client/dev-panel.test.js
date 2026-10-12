@@ -86,3 +86,17 @@ test('面板：服务端拒绝（BAD_TARGET）时把原因报出来，并提示�
     });
   } finally { restore(); }
 });
+
+test('面板新增：setLayers / pick / opPool / ops 的转发', async () => {
+  const { mod, calls, restore } = await loadPanel();
+  try {
+    await mod.default.setLayers('lateranoShip', 12);
+    await mod.default.pick('char_4217_makoto', 'chess_char_6_diy1_a', 2);
+    await mod.default.opPool();
+    await mod.default.ops();
+    assert.deepEqual(calls[0][1], { op: 'setLayers', bondId: 'lateranoShip', n: 12 }, 'setLayers：转发到 dev 的 setLayers');
+    assert.deepEqual(calls[1][1], { op: 'pick', slot: 'chess_char_6_diy1_a', charId: 'char_4217_makoto', skillIndex: 2 }, 'pick：带槽位与技能');
+    assert.deepEqual(calls[2][1], { op: 'opPool' });
+    assert.deepEqual(calls[3][1], { op: 'ops' });
+  } finally { restore(); }
+});
