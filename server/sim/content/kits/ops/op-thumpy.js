@@ -46,7 +46,7 @@
 //   (PRTS: 0.533 tiles/s here, not the regular game's 0.8), never into an impassable tile (keeping 0.2 tile off its edge on a
 //   horizontal belt). Every `interval` s, the cast included [ASSUMED], every targetable ground enemy on her tile and the
 //   max_cnt − 1 tiles ahead and every enemy she blocks takes atk_scale × ATK physical; an enemy there whose 侵蚀 bursts
-//   loses thumpy[ep_break_water].def DEF more — permanent and stacking, as the burst's own −120 [ASSUMED].
+//   loses thumpy[ep_break_water].def DEF more — permanent and stacking, as the burst's own −120 [ASSUMED]. The carry skips 免疫传送 units (PRTS 备注末句: 黍/余's immunity — `stats.otherImmunities`, the same reading as chess_char_6_21-clemnt.js).
 
 import { num, talentBb, traitBb, skillRec, up } from '../shared/tier1.js';
 import { offsetTile, frontOf, dirVec } from '../../../dir.js';
@@ -81,6 +81,24 @@ const nz = (o) => Object.fromEntries(Object.entries(o).filter(([, v]) => Number.
  * ground an enemy stands on; the mode's stages have no 假高台 / 坑洞 tiles).
  */
 const usable = (battle, r, c) => battle.grid.groundPassable(r, c);
+
+/**
+ * 传送免疫（PRTS S3 备注末句）："传送带效果不会影响 免疫传送(黍)/免疫传送(余) 的单位，
+ * 最终传送处理对传送免疫的单位无效"。数据在 stats.otherImmunities（simdata.js immuneSet 会把
+ * immunities / otherImmunities 合起来），判定写法照 kits/ops/chess_char_6_21-clemnt.js 的同名用途。
+ */
+const TRANSPORT_IMMUNE = /teleport|transmit|exile/i;
+/**
+ * 该单位是否免疫传送。三层判定，与 kits/ops/chess_char_6_21-clemnt.js 的 cannotCarry 保持同一口径：
+ *   ① 归一化免疫集 `def.immune`（simdata.js immuneSet：把 immunities / otherImmunities 合并、去 "Immune" 后缀并小写）
+ *   ② 原始 otherImmunities 列表的正则匹配（自定义数据里可能写成别的拼法）
+ *   （自缚由调用处单独判，见 carry）
+ */
+const transportImmune = (e) => {
+  if (e.def?.immune?.has?.('teleport') || e.def?.immune?.has?.('exile')) return true;
+  const list = e.def?.raw?.stats?.otherImmunities ?? [];
+  return Array.isArray(list) && list.some((k) => TRANSPORT_IMMUNE.test(String(k)));
+};
 
 /**
  * S2's glue tiles (PRTS 备注 order): her own tile when usable (not counted, never spreads), then `count` tiles — the front
@@ -149,6 +167,7 @@ export default {
       if (!(step > 0)) return;
       for (const e of battle.enemies) {
         if (!e.alive || e.hidden || e.isFlying || e.blockedBy || e.s.flags.selfBound || e.s.massLevel > massCap) continue;
+        if (transportImmune(e)) continue;   // 免疫传送（黍/余）不受传送带效果影响
         if (!belt.carryKeys.has(tileKeyOf(e))) continue;
         let nx = e.x - fc * step, ny = e.y - fr * step;
         const r = Math.round(ny), c = Math.round(nx);

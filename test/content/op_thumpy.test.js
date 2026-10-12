@@ -28,6 +28,8 @@ const approx = (a, b, msg, eps = 1e-6) => assert.ok(Math.abs(a - b) <= eps * Mat
 const dummy = (key, o = {}) => enemyRec({ key, hp: 1e9, speed: 0, mass: 0, ...o });
 const ENEMIES = {
   enemy_dummy: dummy('enemy_dummy'), enemy_fly: dummy('enemy_fly', { motion: 'FLY' }), enemy_m1: dummy('enemy_m1', { mass: 1 }),
+  // 免疫传送（黍/余）：PRTS S3 备注末句 —— 传送带**效果**对它们无效，但伤害效果照旧
+  enemy_imm: dummy('enemy_imm', { mass: 1, otherImmunities: ['teleport'] }),
   enemy_m4: dummy('enemy_m4', { mass: 4 }), enemy_m5: dummy('enemy_m5', { mass: 5 }),
   enemy_shooter: dummy('enemy_shooter', { atk: 300, bat: 1, range: 3 }),
 };
@@ -351,6 +353,26 @@ test('PRP-X 出发的勇气 trait: every 元素损伤 she deals ×1.15 while she
     const g0 = far.elem.erosion;
     h.b.dealDamage(u, far, { amount: 100, type: 'phys' });
     approx(far.elem.erosion - g0, 0.12 * u.s.atk * (x ? 1.15 : 1), `${label(f)}: while blocking`);
+    done(h);
+  }
+});
+
+test('S3 belt: 免疫传送 的单位（黍/余）不被搬运，但仍吃传送带的伤害效果（PRTS 备注末句）', () => {
+  for (const [tier, elite] of [[5, false], [6, true]]) {
+    const { h, u } = field({ tier, elite, skill: 2, col: 4 });
+    noSp(h, u);
+    const imm = h.spawn('enemy_imm', { pos: [10, 7] });   // 传送带第 3 格上
+    const walker = h.spawn('enemy_m1', { pos: [10, 6] }); // 对照：普通单位会被搬走
+    h.step();
+    u.skill.addCharge(1);
+    u.skill.activate('test');
+    assert.ok(u.mem.thumpyBelt.carryKeys.has(K(10, 7)), `T${tier}: 该格属于传送带`);
+    const immX = imm.x, walkerX = walker.x;
+    h.run(1);
+    assert.equal(imm.x, immX, `T${tier}: 免疫传送的单位没有被搬运`);
+    assert.ok(walker.x < walkerX, `T${tier}: 普通单位被搬运了（${walkerX} → ${walker.x}）`);
+    const hits = h.hooksOf('damaged').filter((c) => c.source === u && c.target === imm && c.dmg.tags?.includes('thumpy:belt'));
+    assert.ok(hits.length >= 1, `T${tier}: 免疫传送的单位仍受到传送带伤害（${hits.length} 次）`);
     done(h);
   }
 });
