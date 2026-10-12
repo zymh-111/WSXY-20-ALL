@@ -408,3 +408,49 @@ test('[CUSTOM] 精锐形态（每 2 层 +1%）与普通形态（每 3 层 +1%）
   assert.ok(Math.abs(e3.s.atk / e0.s.atk - 1 - 0.01) < 1e-6, '精锐 3 层 → 仍是 +1%（每 2 层一档）');
   assert.ok(Math.abs(e4.s.atk / e0.s.atk - 1 - 0.02) < 1e-6, `精锐 4 层 → +2%，实得 +${((e4.s.atk / e0.s.atk - 1) * 100).toFixed(2)}%`);
 });
+
+test('跨干员：珊比的传送带打出侵蚀爆发时，克莱门莎照样锁定 + 齐射 + 扣 1 发（全图生效）', () => {
+  const THUMPY = 'char_4235_thumpy';
+  const SLOT_T = 'chess_char_6_diy1_a';
+  const h = makeBattle({
+    defs: DEFS, timeLimit: 0, autoFinish: false, hooks: HOOKS, captureNoisy: true, seed: 31,
+    units: [
+      // 克莱门莎放在最远的可部署格（第 11 行第 1 列；本引擎的地面只到 9~11 行），
+      // 距传送带上的爆发点约 5 格 —— 远超她自身射程，用来验证"全图爆发也能打"
+      { chessId: CHESS_E, row: 11, col: 1, skillIndex: 2 },
+      { diy: { slot: 6, charId: THUMPY, skillIndex: 2, uniEquipId: null }, row: 10, col: 4 },
+    ],
+  });
+  h.step(1);
+  const clem = h.unit(CHESS_E);
+  const thumpy = h.unit(SLOT_T);
+  assert.ok(clem && thumpy, '两位都在场');
+  assert.equal(clem.skill.id, 'skchr_clemnt_3', '克莱门莎带 S3');
+  assert.equal(thumpy.skill.id, 'skchr_thumpy_3', '珊比带 S3');
+
+  // 把敌人放在传送带上，并把它侵蚀条顶到临界（差 1 点就爆），等传送带的伤害触发爆发
+  const foe = h.spawn('enemy_dummy', { pos: [10, 6] });
+  assert.ok(foe, '敌人在传送带上');
+  foe.elem.erosion = Math.max(0, foe.gaugeMax - 1);
+
+  assert.equal(clem.skill.activate('test', { free: true }), true, '克莱门莎 S3 开启');
+  assert.equal(thumpy.skill.activate('test', { free: true }), true, '珊比 S3 开启（展开传送带）');
+
+  // 等一次真实爆发（来源应当是珊比，而不是克莱门莎）
+  const got = h.runUntil(() => h.hooksOf('elementBurst').length > 0, 8);
+  assert.ok(got, '出现了侵蚀爆发');
+  const burst = h.hooksOf('elementBurst')[0];
+  assert.equal(burst.element, 'erosion', '是侵蚀爆发');
+  assert.equal(burst.source, thumpy, `爆发来源是珊比（不是克莱门莎）`);
+  assert.equal(burst.target, foe, '爆发的就是传送带上那个敌人');
+
+  // 克莱门莎应当因此打上锁定标记
+  assert.equal(clem.mem.clemntBombs.marks.size, 1, '爆发被她锁定（marks +1）');
+  const ammo0 = clem.skill.ammoLeft;
+  h.run(3);     // ep_break_duration 1 s 后开始齐射，三段落在 +0.5/+1.5/+2.5 秒
+  assert.equal(clem.skill.ammoLeft, ammo0 - 1, '消耗 1 发弹药');
+  const bombs = h.hooksOf('damaged').filter((c) => c.source === clem && c.dmg?.tags?.includes('clemnt:bomb'));
+  assert.ok(bombs.length >= 3, `打出了 3 段以上齐射伤害（实得 ${bombs.length}）`);
+  assert.ok(bombs.every((c) => c.target === foe), '落点就是爆发那个敌人');
+  checkInvariants(h.b);
+});

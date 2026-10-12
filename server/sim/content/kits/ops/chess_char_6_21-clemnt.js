@@ -164,7 +164,10 @@ function clemnt(bb, raw, def) {
   };
   const bombard = (battle, unit, e, m, skill) => {
     const [r, c] = tile(e), key = r * COLS + c;
-    if ((m.tiles.get(key) ?? -1) > battle.time) return false;
+    if ((m.tiles.get(key) ?? -1) > battle.time) {
+      console.log(`[clemnt] 齐射被同格冷却挡下 | 格=(${r},${c}) 剩余 ${((m.tiles.get(key) ?? 0) - battle.time).toFixed(1)}s`);
+      return false;
+    }
     m.tiles.set(key, battle.time + num(b3.projectile_life_time, 5));
     const keys = new Set([[r, c], [r + 1, c], [r - 1, c], [r, c + 1], [r, c - 1]].map(([rr, cc]) => rr * COLS + cc));
     const atk = unit.s.atk;
@@ -301,6 +304,18 @@ function clemnt(bb, raw, def) {
         }]);
       }
       battle.on('elementBurst', ({ source, target, element }) => {
+        // [TEMP-LOG-CLEMNT] 诊断：为什么不锁定（排查"珊比爆发了却没伤害"）
+        if (element === 'erosion') {
+          const why = !up(unit) ? '她不在场/已阵亡'
+            : !unit.skill?.active ? '技能未开启（弹药耗尽或没开）'
+            : unit.skill.id !== S3 ? `带的是 ${unit.skill.id}（不是 S3）`
+            : !target || !canTargetEnemy(unit, target, GROUND) ? '目标不可选（隐匿/无敌/飞行/未部署/隐藏）'
+            : source === unit ? '她自己造成的爆发（官方语义排除）'
+            : null;
+          console.log(`[clemnt] 侵蚀爆发 | 目标=${target?.defId ?? '?'} 来源=${source?.defId ?? '无'} `
+            + `弹药=${unit.skill?.ammoLeft ?? '-'} 技能=${unit.skill?.id ?? '-'} → ${why ? '不锁定（' + why + '）' : '锁定，1 秒后齐射'}`);
+          if (why) return;
+        }
         if (element !== 'erosion' || !up(unit) || !unit.skill?.active || unit.skill.id !== S3
           || !canTargetEnemy(unit, target, GROUND)) return;
         // 官方："当**全场有敌人**侵蚀损伤爆发时，消耗1发弹药…" —— 指外部的爆发。
