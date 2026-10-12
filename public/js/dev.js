@@ -17,7 +17,7 @@ import { net } from './net.js';
 
 /** 后门支持的操作（与服务端 handleDev 一一对应）。 */
 const OPS = Object.freeze(['state', 'funds', 'level', 'refresh', 'layers', 'layersAll', 'setLayers', 'pick', 'opPool', 'ops',
-  'devStatus', 'devToggle']);
+  'devStatus', 'devToggle', 'boost', 'give']);
 
 /** 发一条后门指令；失败把服务端的 error/detail 原样抛出来。 */
 async function dev(op, fields = {}) {
@@ -47,6 +47,10 @@ const api = {
   opPool: () => dev('opPool'),
   /** 槽位与房间信息（含放宽开关状态）。 */
   ops: () => dev('ops'),
+  /** 直接给我：把该槽位的干员直接塞进手牌（走游戏自己的 buy）。 */
+  give: (slot = 'chess_char_6_diy1_a') => dev('give', { slot }),
+  /** 一键到位：补钱 + 等级拉满 + 刷新商店（自选干员才会真的上架）。 */
+  boost: () => dev('boost'),
   /** 重新读状态并刷新两个下拉（面板上「⟳ 刷新」用）。
    *  注意别叫 refresh —— 那个名字属于服务端的「免费刷新」op。 */
   reload: () => api._reload ? api._reload() : Promise.resolve(),
@@ -206,14 +210,19 @@ function buildPanel() {
   refreshOps();
 
   api._reload = async () => { await refreshBonds(); await refreshOps(); return show(); };
+  // 首次打开时，两个下拉的读取是异步的；若刚好赶上开关/连接未就绪，会留下空下拉。
+  // 这里在构建后 700ms 再自动补一次，免去手动点「⟳ 刷新」。
+  setTimeout(() => { api._reload().catch(() => {}); }, 700);
   body.append(status);
   body.append(row([btn('⟳ 刷新', () => api.reload()), btn('+500 资金', () => api.funds(500))]));
+  body.append(row([btn('⏫ 一键到位（钱+等级满+刷新）', () => api.boost())]));
   body.append(row([btn('+1 等级', () => api.level(1)), btn('+5 等级', () => api.level(5)), btn('免费刷新', () => api.refresh())]));
   body.append(row([bondSel, layerNum, btn('设层数', () => api.setLayers(bondSel.value, Number(layerNum.value) || 0))]));
   body.append(row([btn('全盟约 +3', () => api.layersAll(3))]));
   body.append(el('div', { marginTop: '6px', color: '#8fd0ff' }, '自选干员 → 塞进槽位（选完点“塞入”）'));
   body.append(row([slotSel, opSel]));
-  body.append(row([btn('塞入', () => api.pick(opSel.value, slotSel.value))]));
+  body.append(row([btn('塞入', () => api.pick(opSel.value, slotSel.value)),
+    btn('🎁 直接给我', () => api.give(slotSel.value))]));
   body.append(el('div', { marginTop: '6px', color: '#7b8ea3' }, '仅本机/内网；房间默认限 solo'));
   body.append(log);
   return root;

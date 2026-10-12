@@ -66,6 +66,7 @@ function TestModeSwitch({ coop }) {
       .then((r) => {
         setPhase('');
         setOn(!!r.enabled);
+        if (r.enabled && globalThis.__dev && globalThis.__dev.reload) globalThis.__dev.reload();
         console.log('[dev] devToggle reply', r);
       })
       .catch((e) => {

@@ -130,19 +130,87 @@ export function handleDev(lobby, session, msg, ctx = {}) {
       const n = reqInt(msg, 'n');
       if (n === null) return fail(ERR.BAD_MSG, 'dev: level needs an integer n');
       const from = ps.shop.level;
+      const cap = ps.gd?.maxShopLevel ?? 6;
+      let up = 0;
+      let topped = 0;
       let last = OK;
-      for (let i = 0; i < Math.max(0, n); i++) {
-        last = ps.levelUp();                       // 自己判上限与价格，并照常发每级奖励
-        if (last !== OK && last?.ok !== true) break;
+      // 宽松：临时摘掉 _gate()（它会在非休整期返回 WRONG_PHASE），并自动补钱。
+      // 用游戏自己的 levelUp()，所以价格、栏位、每级奖励都照常走。
+      const gate = ps._gate;
+      if (typeof gate === 'function') ps._gate = () => null;
+      try {
+        for (let i = 0; i < Math.max(0, n); i++) {
+          if (ps.shop.level >= cap) { last = { error: 'MAX_LEVEL' }; break; }
+          const price = Math.max(0, ps.shop.upgradePrice);
+          if (ps.funds < price) { topped += ps.addFunds(price - ps.funds, { reason: 'dev' }); }
+          const r = ps.levelUp();
+          if (r && r.error) { last = r; break; }
+          up += 1;
+        }
+      } finally {
+        if (typeof gate === 'function') ps._gate = gate;
       }
       return {
         ok: true,
         reply: { t: 'dev',
           from, level: ps.shop.level, funds: ps.funds,
-          upgradePrice: ps.shop.upgradePrice,
-          stopped: ps.shop.level < from + n ? (last?.error ?? null) : null,
+          upgradePrice: ps.shop.upgradePrice, up, topped,
+          stopped: up < n ? (last?.error ?? null) : null,
         },
       };
+    }
+    case 'give': {
+      // 直接获取：把该自选槽做成一个 0 价货位，再走游戏自己的 buy()。
+      // 这样手牌容量、库存递减、onBuy 事件、统计都按正常逻辑走，不需要我另写一份"入队"。
+      const slot = String(msg.slot ?? 'chess_char_6_diy1_a');
+      const rec = ps.gd?.chess?.(slot);
+      if (!rec) return fail(ERR.BAD_TARGET, `dev: ${slot} 不是本局可用的槽位`);
+      if (rec.isDiy && !rec.diyFor) return fail(ERR.BAD_TARGET, 'dev: 该槽位没有你的自选记录（先点「塞入」）');
+      if (ps.funds < 1) ps.addFunds(1000, { reason: 'dev' });
+      // 库存：自选件按 diyStock 的 left 计；先给它至少留 1 份，否则 buy() 会报 SOLD_OUT
+      try {
+        const base = ps.gd.baseIdOf(slot);
+        const e = ps.diyStock?.entries?.get(base);
+        if (e && !(e.left > 0)) e.left = 1;
+      } catch { /* 忽略 */ }
+      const idx = ps.shop.slots.length;
+      ps.shop.slots.push({ kind: 'chess', id: slot, basePrice: 0, frozen: false, sold: false });
+      const gate = ps._gate;
+      if (typeof gate === 'function') ps._gate = () => null;   // 宽松：跳过阶段检查
+      let r;
+      try { r = ps.buy(idx); } finally { if (typeof gate === 'function') ps._gate = gate; }
+      if (r && r.error) {
+        ps.shop.slots.splice(idx, 1);
+        ps.dirty?.();
+        const hint = r.error === 'HAND_FULL' ? '：手牌满了，先上几个场或撤回' : '';
+        return fail(ERR.BAD_TARGET, `dev: 直接获取失败（${r.error}）${hint}`);
+      }
+      ps.dirty?.();
+      return { ok: true, reply: { t: 'dev', slot, given: ps.gd.baseIdOf(slot), ...snapshot(ps) } };
+    }
+    case 'boost': {
+      // 一键到位：钱补到 9999 → 等级拉满 → 刷新商店。
+      // 之所以要刷新商店：自选干员是按 slot.shopLevel（六阶=6）才上架的，
+      // 光升级不刷新，货架上仍是旧牌。
+      const cap = ps.gd?.maxShopLevel ?? 6;
+      const gate = ps._gate;
+      if (typeof gate === 'function') ps._gate = () => null;
+      let up = 0;
+      try {
+        if (ps.funds < 9999) ps.addFunds(9999 - ps.funds, { reason: 'dev' });
+        for (let i = 0; i < 64 && ps.shop.level < cap; i++) {
+          const price = Math.max(0, ps.shop.upgradePrice);
+          if (ps.funds < price) ps.addFunds(price - ps.funds, { reason: 'dev' });
+          const r = ps.levelUp();
+          if (r && r.error) break;
+          up += 1;
+        }
+      } finally {
+        if (typeof gate === 'function') ps._gate = gate;
+      }
+      try { ps.rollShop?.({ keepFrozen: false }); } catch { /* 老版本没有这个方法就算了 */ }
+      ps.dirty?.();
+      return { ok: true, reply: { t: 'dev', up, ...snapshot(ps) } };
     }
     case 'refresh': {
       ps.shop.freeRefreshes += 1;
@@ -197,6 +265,8 @@ export function handleDev(lobby, session, msg, ctx = {}) {
       if (!ok) return fail(ERR.BAD_TARGET, 'dev: setDiy refused（槽位/干员不合法，或该干员没有 kit）');
       // 刷新自选库存，商店才会按新配置出牌
       try { ps.initDiyStock?.(new Set(match.bannedBondIds ?? [])); } catch { /* 兼容旧签名 */ }
+      // 塞入后刷新商店：否则货架上还是上一轮的牌，看不到新塞的干员
+      try { ps.rollShop?.({ keepFrozen: false }); } catch { /* 忽略 */ }
       ps.dirty?.();
       return { ok: true, reply: { t: 'dev', slot, charId, diy: snapshot(ps).diy } };
     }
@@ -246,6 +316,8 @@ function snapshot(ps) {
     knownBonds: knownBonds(ps),
     diy,
     standIns: (ps.standIns ?? []).length,
+    hand: (ps.hand ?? []).filter(Boolean).length,
+    temp: (ps.temp ?? []).filter(Boolean).length,
   };
 }
 

@@ -25,8 +25,11 @@ function fakePlayer({ funds = 10, shopLevel = 1, maxShopLevel = 6, upgradePrice 
     layers: {}, bonds: Object.fromEntries(bondIds.map((b) => [b, { active: false, layers: 0 }])),
     diy: { chess_char_6_diy1_a: { charId: 'char_4217_makoto', skillIndex: 0 } },
     standIns: [],
+    hand: [], temp: [],
     gd: {
       maxShopLevel, upgradeBase: () => upgradePrice,
+      chess: (id) => ({ id, isDiy: true, diyFor: 'p1' }),
+      baseIdOf: (id) => id,
       raw: {
         // 生产路径：data/backups.json 挂在 raw.backups 下（dev.js 的 diyOf 优先读这里）
         backups: {
@@ -56,6 +59,8 @@ function fakePlayer({ funds = 10, shopLevel = 1, maxShopLevel = 6, upgradePrice 
     recompute() { calls.push(['recompute']); },
     setDiy(picks) { calls.push(['setDiy', picks]); this.diy = { ...picks }; return true; },
     initDiyStock() { calls.push(['initDiyStock']); },
+    rollShop(o) { calls.push(['rollShop', o]); },
+    buy(i) { calls.push(['buy', i]); this.hand.push({ id: this.shop.slots[i] && this.shop.slots[i].id }); return { ok: true }; },
   };
   return ps;
 }
@@ -170,12 +175,33 @@ test('level：升级商店走游戏自己的价格与上限（照常发每级奖
   assert.equal(ps.calls.filter((c) => c[0] === 'levelUp').length, 3);
 });
 
-test('level：钱不够时停下并报 NO_FUNDS（不静默加等级）', () => {
+test('level（宽松版）：跳过阶段检查、钱不够自动补，照样升上去', () => {
+  // 旧版 level 会因"非休整期"（_gate → WRONG_PHASE）或钱不够而停下；
+  // 按需求放宽后：临时摘掉 _gate，并自动补足升级费。
   const ps = fakePlayer({ funds: 5, shopLevel: 1, maxShopLevel: 6, upgradePrice: 4 });
   const res = dev(withDev(fakeLobby({ ps })), SESSION, { op: 'level', n: 3 }, LOCAL);
-  assert.equal(res.level, 2, '只升得起一级');
-  assert.equal(res.stopped, 'NO_FUNDS');
-  assert.equal(ps.funds, 1);
+  assert.equal(res.level, 4, '升了 3 级（钱是补上的）');
+  assert.equal(res.up, 3);
+  assert.ok(res.topped > 0, `补了钱（${res.topped}）`);
+  assert.equal(res.stopped, null, '没有因为钱不够停下');
+  assert.ok(ps.calls.some((c) => c[0] === 'addFunds'), '确实补过钱');
+});
+
+test('boost：一键到位（等级拉满 + 刷新商店）', () => {
+  const ps = fakePlayer({ funds: 0, shopLevel: 1, maxShopLevel: 6, upgradePrice: 4 });
+  const res = dev(withDev(fakeLobby({ ps })), SESSION, { op: 'boost' }, LOCAL);
+  assert.equal(res.ok, true);
+  assert.equal(res.shopLevel, 6, '等级拉满');
+  assert.ok(res.funds >= 9999 - 1000, '钱补到位');
+  assert.ok(ps.calls.some((c) => c[0] === 'rollShop'), '刷新了商店（自选干员才会真的上架）');
+});
+
+test('pick：塞入后刷新商店（否则货架上还是旧牌）', () => {
+  const ps = fakePlayer();
+  const res = dev(withDev(fakeLobby({ ps })), SESSION,
+    { op: 'pick', slot: 'chess_char_6_diy1_a', charId: 'char_4217_makoto' }, LOCAL);
+  assert.equal(res.ok, true);
+  assert.ok(ps.calls.some((c) => c[0] === 'rollShop'), '调了 rollShop');
 });
 
 test('layers / layersAll：加盟约层数（未激活也能加）', () => {
@@ -256,6 +282,7 @@ test('形状契约：每个成功返回都必须带 reply，否则 server/net.js
     { op: 'layers', bondId: 'egirShip', n: 1 }, { op: 'layersAll', n: 1 },
     { op: 'setLayers', bondId: 'egirShip', n: 2 }, { op: 'opPool' },
     { op: 'pick', slot: 'chess_char_6_diy1_a', charId: 'char_4217_makoto' },
+    { op: 'give', slot: 'chess_char_6_diy1_a' }, { op: 'boost' },
   ];
   for (const msg of msgs) {
     const r = handleDev(lobby, SESSION, msg, LOCAL);
@@ -264,4 +291,21 @@ test('形状契约：每个成功返回都必须带 reply，否则 server/net.js
     // 客户端 net.js: `typeof msg.t !== 'string' → return`（整帧丢弃）——reply 里必须带 t
     assert.equal(typeof r.reply.t, 'string', `${msg.op} 的 reply 必须带字符串 t，否则客户端会把整帧丢掉、请求超时`);
   }
+});
+
+test('give：直接获取（插 0 价货位 + 走游戏自己的 buy）', () => {
+  // 用户要的"直接拿到干员"：不走商店随机、也不用刷等级，
+  // 而是把该自选槽做成 0 价货位再调 buy()，手牌/库存/事件都按游戏逻辑走。
+  const ps = fakePlayer();
+  const lobby = withDev(fakeLobby({ ps }));
+  const res = dev(lobby, SESSION, { op: 'give', slot: 'chess_char_6_diy1_a' }, LOCAL);
+  assert.equal(res.ok, true);
+  const buy = ps.calls.find((c) => c[0] === 'buy');
+  assert.ok(buy, '调了游戏自己的 buy()');
+  assert.equal(ps.hand.length, 1, '手牌多了一个');
+  const slot = ps.shop.slots[buy[1]];
+  assert.equal(slot.basePrice, 0, '0 价（等于免费）');
+  assert.equal(slot.id, 'chess_char_6_diy1_a', '货位就是那个自选槽');
+  dev(lobby, SESSION, { op: 'give', slot: 'chess_char_6_diy1_a' }, LOCAL);
+  assert.equal(ps.hand.length, 2, '可以重复获取');
 });
