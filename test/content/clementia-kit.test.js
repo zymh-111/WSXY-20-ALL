@@ -140,31 +140,39 @@ test('S3 与海为敌: 10 bullets, normal attacks are free, an 侵蚀爆发 lock
   assert.equal(elem[0].dmg.element, 'erosion');
   checkInvariants(h.b);
 });
-test('S3 反自触发：她自己齐射造成的侵蚀爆发不得再触发齐射（否则连环、连扣弹药）', () => {
-  // 官方：当全场有**敌人**侵蚀损伤爆发时消耗 1 发弹药 —— 只认外部爆发。
-  // 齐射里那段 ep_damage_scale 元素伤害会填元素条；若不排除『由她自己造成的爆发』，
-  // 就会爆发→齐射→再爆发→再齐射无限套娃（实测未修时：一次外部爆发放大成 3 次齐射、连扣 3 发）。
-  // 这条守住 kit 里的 `if (source === unit) return;`。
+test('S3 触发条件不限制来源：她自己齐射打出的侵蚀爆发同样要标记 + 发射（PRTS「场上所有可选的敌方地面单位」）', () => {
+  // 用户实测报过：珊比传送带把敌人打到侵蚀爆发，克莱门莎却不出手 —— 因为 kit 曾错误地写了
+  // `if (source === unit) return;`（我当初为压"连环扣弹"加的），而 PRTS 原文并没有来源限制。
+  // 真正防连环的是官方另外三条：标记窗口 1 秒 + 同格弹道未结束(5 s)不能再选 + 每帧至多发射一次。
   const h = mk({ seed: 15, units: [{ chessId: CHESS_E, row: 10, col: 3, skillIndex: 2 }] });
   const u = ready(h);
   const foe = h.spawn('enemy_dummy', { pos: [10, 5] });
   assert.equal(u.skill.activate('test', { free: true }), true, 'S3 activated');
-  // ① 由她自己造成的爆发 → 不打标记、不扣弹药
   const ammo0 = u.skill.ammoLeft;
+
+  // ① 来源＝她自己：照样打标记
   h.b.emit('elementBurst', { source: u, target: foe, element: 'erosion' });
-  assert.equal(u.mem.clemntBombs.marks.size, 0, '自触发不打标记');
+  assert.equal(u.mem.clemntBombs.marks.size, 1, '无论来源都打标记');
   h.step(1);
-  assert.equal(u.skill.ammoLeft, ammo0, '自触发不消耗弹药');
-  // ② 外部（敌人身上的）爆发 → 正常触发一次齐射、只扣 1 发
-  h.b.emit('elementBurst', { source: foe, target: foe, element: 'erosion' });
-  assert.equal(u.mem.clemntBombs.marks.size, 1, '外部爆发打标记');
-  h.run(0.2);
-  assert.equal(u.skill.ammoLeft, ammo0 - 1, '一次齐射只扣 1 发弹药');
+  assert.equal(u.skill.ammoLeft, ammo0 - 1, '无论来源，1 秒窗口内每帧尝试 → 发射并扣 1 发');
+
+  // ② 同格再爆：弹道未结束，不得再发射（这就是防连环的真正机制）
+  h.b.emit('elementBurst', { source: u, target: foe, element: 'erosion' });
+  h.b.emit('elementBurst', { source: u, target: foe, element: 'erosion' });
+  h.run(4);
+  assert.equal(u.skill.ammoLeft, ammo0 - 1, '同一格在弹道 5 秒内反复爆条也只会发射一次');
+
+  // ③ 弹道结束后同格可以再发射
+  h.run(1.5);
+  h.b.emit('elementBurst', { source: u, target: foe, element: 'erosion' });
+  h.step(1);
+  assert.equal(u.skill.ammoLeft, ammo0 - 2, '弹道结束后同格恢复可炸');
+
+  // ④ 每次发射都恰好 3 段物理 + 3 段元素伤害，不会因为来源是自己而翻倍
   h.run(3);
-  assert.equal(u.skill.ammoLeft, ammo0 - 1, '齐射过程中不再被自触发多扣');
-  const bombs = h.hooksOf('damaged').filter((c) => c.dmg.tags?.includes('clemnt:bomb'));
-  assert.equal(bombs.filter((c) => c.type === 'phys').length, 3, '恰好 3 段物理');
-  assert.equal(bombs.filter((c) => c.type === 'elemental').length, 3, '恰好 3 段元素伤害');
+  const bombs = h.hooksOf('damaged').filter((c) => c.dmg?.tags?.includes('clemnt:bomb'));
+  assert.equal(bombs.filter((c) => c.type === 'phys').length, 6, '两次发射 = 6 段物理');
+  assert.equal(bombs.filter((c) => c.type === 'elemental').length, 6, '两次发射 = 6 段元素伤害');
   checkInvariants(h.b);
 });
 

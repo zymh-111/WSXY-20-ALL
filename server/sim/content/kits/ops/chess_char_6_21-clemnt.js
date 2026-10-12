@@ -319,7 +319,6 @@ function clemnt(bb, raw, def) {
             : !unit.skill?.active ? '技能未开启（弹药耗尽或没开）'
             : unit.skill.id !== S3 ? `带的是 ${unit.skill.id}（不是 S3）`
             : !target || !canTargetEnemy(unit, target, GROUND) ? '目标不可选（隐匿/无敌/飞行/未部署/隐藏）'
-            : source === unit ? '她自己造成的爆发（官方语义排除）'
             : null;
           console.log(`[clemnt] 侵蚀爆发 | 目标=${target?.defId ?? '?'} 来源=${source?.defId ?? '无'} `
             + `弹药=${unit.skill?.ammoLeft ?? '-'} 技能=${unit.skill?.id ?? '-'} → ${why ? '不锁定（' + why + '）' : '获得【可轰炸标记】(1 秒窗口，每帧尝试发射)'}`);
@@ -327,13 +326,14 @@ function clemnt(bb, raw, def) {
         }
         if (element !== 'erosion' || !up(unit) || !unit.skill?.active || unit.skill.id !== S3
           || !canTargetEnemy(unit, target, GROUND)) return;
-        // 官方："当**全场有敌人**侵蚀损伤爆发时，消耗1发弹药…" —— 指外部的爆发。
-        // ⚠️ 必须排除"由她自己造成的爆发"：齐射里那段 ep_damage_scale 元素伤害会填元素条，
-        // 条满 → 再次 elementBurst（source = 她自己）→ 又标记 → 又齐射，连环下去。
-        // 实测一次外部爆发会被放大成 3 次齐射、连扣 3 发弹药（引擎 damage.js 也注明 burst 在
-        // "<el>Burst lock 建立之前"就跑了钩子，所以自己造成的爆发也会进来）。
-        if (source === unit) return;
-        // 侵蚀爆发 → one lock: 1 s (bb ep_break_duration), then a 3-shell barrage on that tile.
+        // PRTS S3 备注：「技能期间场上**所有可选**的敌方地面单位侵蚀损伤爆发时获得1秒的【可轰炸标记】Buff」
+        // —— **没有来源限制**，她自己齐射打出的爆发同样要标记（用户实测报过：只认外部爆发是错的）。
+        // 不会因此无限连环，限制来自官方另外三条：
+        //   ① 标记只有 1 秒窗口（bb ep_break_duration）；
+        //   ② 「无法选择目前存在未结束的舰船轰炸弹道（中心判定）作为轰炸目标」—— 同格 5 秒内不能再发射
+        //      （bb projectile_life_time，见 bombard 的 m.tiles）；
+        //   ③ 每帧至多发射一次（onTick 里命中即 break）。
+        // 于是同格反复爆条最多 5 秒 1 发；只有**跨地块**的爆条才可能连续发射，这是规则本身允许的。
         unit.mem.clemntBombs?.marks.set(target, battle.time + num(b3.ep_break_duration, 1));
       }, { owner: unit });
     },
