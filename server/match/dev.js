@@ -147,6 +147,15 @@ export function handleDev(lobby, session, msg, ctx = {}) {
     return { ok: true, reply: { t: 'dev', slot: slot0, charId: charId0, pendingMatch: true, seat: session.diy ?? null } };
   }
 
+  if (op === 'enemies') {
+    // 全部敌人（面板做悬赏下拉用）
+    const all = match.gd?.raw?.enemies ?? {};
+    const enemies = Object.keys(all).map((key) => ({
+      key, name: all[key]?.name ?? key, rank: all[key]?.rank ?? null, fly: !!all[key]?.isFlyEnemy,
+    })).sort((a, b) => String(a.name).localeCompare(String(b.name), 'zh'));
+    return { ok: true, reply: { t: 'dev', count: enemies.length, enemies } };
+  }
+
   // ── 以下是会改状态的操作：还要求开关已开 + 对局已开始 + 自己的座位 ──────────
   if (!devOn(room)) return fail(ERR.BAD_TARGET, 'dev: 后门开关未开启（先在面板点「开启后门」）');
   if (!match) return fail(ERR.BAD_TARGET, 'dev: the match has not started');
@@ -281,6 +290,30 @@ export function handleDev(lobby, session, msg, ctx = {}) {
       return { ok: true, reply: { t: 'dev', kind: 'diy', given: slot, charId: target, uid: piece.uid ?? null, ...snapshot(ps) } };
     }
 
+    case 'bounty': {
+      // 自选悬赏怪 → 加进「下一波」。
+      // 走游戏自己的 Match.addBounty(ps, card)：它会校验敌人存在、生成 id、算 roundsLeft、并 ps.dirty()；
+      // 之后 withBounties()（combat.js）就会把它并进下一场战斗的生成列表，客户端预告里也会出现 source:'bounty' 那一行。
+      const enemyKey = String(msg.enemyKey ?? '');
+      if (!enemyKey) return fail(ERR.BAD_MSG, 'dev: bounty needs enemyKey');
+      const erec = match.gd?.enemy?.(enemyKey);
+      if (!erec) return fail(ERR.BAD_TARGET, `dev: 没有这个敌人 ${enemyKey}`);
+      const count = Math.max(1, Math.min(20, reqInt(msg, 'count') ?? 1));
+      const coin = Math.max(0, reqInt(msg, 'coin') ?? 2);
+      const card = {
+        name: `悬赏·${erec.name ?? enemyKey}`, desc: 'dev backdoor', tier: 1,
+        coin, payout: 'kill', enemyKey, count,
+      };
+      const id = match.addBounty?.(ps, card);
+      if (!id) return fail(ERR.BAD_TARGET, `dev: 加入失败（${enemyKey}）`);
+      return { ok: true, reply: { t: 'dev', added: id, enemyKey, count, coin, bounties: (ps.bounties ?? []).length } };
+    }
+    case 'unbounty': {
+      const n = (ps.bounties ?? []).length;
+      ps.bounties = [];
+      ps.dirty?.();
+      return { ok: true, reply: { t: 'dev', cleared: n, bounties: 0 } };
+    }
     case 'boost': {
       // 一键到位：钱补到 9999 → 等级拉满 → 刷新商店。
       // 之所以要刷新商店：自选干员是按 slot.shopLevel（六阶=6）才上架的，
@@ -431,6 +464,7 @@ function snapshot(ps) {
     knownBonds: knownBonds(ps),
     diy,
     standIns: (ps.standIns ?? []).length,
+    bounties: (ps.bounties ?? []).map((b) => ({ enemyKey: b?.card?.enemyKey ?? null, count: b?.card?.count ?? 0, roundsLeft: b?.roundsLeft ?? 0 })),
     hand: (ps.hand ?? []).filter(Boolean).length,
     temp: (ps.temp ?? []).filter(Boolean).length,
   };

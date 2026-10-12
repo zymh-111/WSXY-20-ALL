@@ -26,14 +26,18 @@ function fakePlayer({ funds = 10, shopLevel = 1, maxShopLevel = 6, upgradePrice 
     diy: { chess_char_6_diy1_a: { charId: 'char_4217_makoto', skillIndex: 0 } },
     standIns: [],
     hand: [], temp: [],
+    bounties: [],
     gd: {
       maxShopLevel, upgradeBase: () => upgradePrice,
       chess: (id) => ({ id, isDiy: true, diyFor: 'p1' }),
+      enemy: (key) => (key === 'enemy_dummy' ? { key, name: '假人' } : null),
       baseIdOf: (id) => id,
       raw: {
         // 生产路径：data/backups.json 挂在 raw.backups 下（dev.js 的 diyOf 优先读这里）
         // 阵容棋子表（give 的 roster 分支读它）
         chess: { chess_char_1_01_a: { charId: 'char_498_inside', name: '隐现', tier: 1, profession: 'SNIPER' } },
+        // 敌人表（bounty / enemies 两个 op 读它）
+        enemies: { enemy_dummy: { name: '假人', rank: 'NORMAL' } },
         backups: {
         diy: {
           ownedPool: ['char_4217_makoto', 'char_112_siege'],
@@ -75,7 +79,17 @@ function fakePlayer({ funds = 10, shopLevel = 1, maxShopLevel = 6, upgradePrice 
 
 /** 假的房间 / 大厅：lobby._room 就是那个房间，开关状态写在它上面。 */
 function fakeLobby({ mode = 'solo', started = true, ps = fakePlayer(), playerId = 'p1', dev = false } = {}) {
-  const match = started ? { players: new Map(ps ? [[playerId, ps]] : []), gd: ps?.gd ?? null } : null;
+  const match = started ? {
+    players: new Map(ps ? [[playerId, ps]] : []), gd: ps?.gd ?? null,
+    // 模拟游戏自己的 Match.addBounty：校验敌人、生成 id、push 进 ps.bounties
+    addBounty: (p, card) => {
+      if (!p || !card || !p.gd.enemy(card.enemyKey)) return null;
+      const b = { id: `bounty:${p.bounties.length + 1}`, card: { ...card }, roundsLeft: 1 };
+      p.bounties.push(b);
+      p.calls.push(['addBounty', card.enemyKey, card.count, card.coin]);
+      return b.id;
+    },
+  } : null;
   const seat = { playerId, diy: {} };
   const room = { mode, match, devEnabled: dev, seatOf: (id) => (id === playerId ? seat : null), _seat: seat };
   const session = { playerId };
@@ -302,6 +316,7 @@ test('形状契约：每个成功返回都必须带 reply，否则 server/net.js
     { op: 'setLayers', bondId: 'egirShip', n: 2 }, { op: 'opPool' },
     { op: 'pick', slot: 'chess_char_6_diy1_a', charId: 'char_4217_makoto' },
     { op: 'give', charId: 'chess_char_1_01_a' }, { op: 'boost' },
+    { op: 'enemies' }, { op: 'bounty', enemyKey: 'enemy_dummy' }, { op: 'unbounty' },
   ];
   for (const msg of msgs) {
     const r = handleDev(lobby, SESSION, msg, LOCAL);
@@ -371,4 +386,36 @@ test('pick 未指定技能时【沿用】该槽位原有的 skillIndex（不能�
   assert.equal(res2.ok, true);
   const call2 = ps.calls.filter((c) => c[0] === 'setDiy').pop();
   assert.equal(call2[1].chess_char_6_diy1_a.skillIndex, 0, '显式给 0 时用 0');
+});
+
+// ── 悬赏怪（自选敌人加入下一波）────────────────────────────────────────────
+
+test('bounty：自选悬赏怪写进 ps.bounties（走游戏自己的 addBounty）；unbounty 清空', () => {
+  const ps = fakePlayer();
+  const lobby = withDev(fakeLobby({ ps }));
+  const res = dev(lobby, SESSION, { op: 'bounty', enemyKey: 'enemy_dummy', count: 2, coin: 5 }, LOCAL);
+  assert.equal(res.ok, true);
+  assert.equal(res.bounties, 1, '列表里有 1 条');
+  assert.equal(ps.bounties.length, 1);
+  assert.equal(ps.bounties[0].card.enemyKey, 'enemy_dummy');
+  assert.equal(ps.bounties[0].card.count, 2, '数量 2');
+  assert.equal(ps.bounties[0].card.coin, 5, '赏金 5');
+  assert.equal(ps.bounties[0].roundsLeft, 1, '只作用于下一波');
+  assert.ok(ps.calls.some((c) => c[0] === 'addBounty'), '调了 Match.addBounty');
+  // state 里也能看到
+  assert.equal(dev(lobby, SESSION, { op: 'state' }, LOCAL).bounties.length, 1);
+  // 不存在的敌人要被拒
+  assert.ok(dev(lobby, SESSION, { op: 'bounty', enemyKey: 'enemy_nope' }, LOCAL).error, '未知敌人被拒');
+  // 清空
+  const c = dev(lobby, SESSION, { op: 'unbounty' }, LOCAL);
+  assert.equal(c.cleared, 1);
+  assert.equal(ps.bounties.length, 0);
+});
+
+test('enemies：返回全部敌人清单（面板下拉用）', () => {
+  const res = dev(withDev(fakeLobby()), SESSION, { op: 'enemies' }, LOCAL);
+  assert.equal(res.ok, true);
+  assert.ok(res.count >= 1);
+  assert.equal(res.enemies[0].key, 'enemy_dummy');
+  assert.equal(res.enemies[0].name, '假人');
 });

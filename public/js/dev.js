@@ -17,7 +17,7 @@ import { net } from './net.js';
 
 /** 后门支持的操作（与服务端 handleDev 一一对应）。 */
 const OPS = Object.freeze(['state', 'funds', 'level', 'refresh', 'layers', 'layersAll', 'setLayers', 'pick', 'opPool', 'ops',
-  'devStatus', 'devToggle', 'boost', 'give']);
+  'devStatus', 'devToggle', 'boost', 'give', 'enemies', 'bounty', 'unbounty']);
 
 /** 发一条后门指令；失败把服务端的 error/detail 原样抛出来。 */
 async function dev(op, fields = {}) {
@@ -53,6 +53,12 @@ const api = {
   /** 直接给我：把该槽位的干员直接塞进手牌（走游戏自己的 buy）。 */
   give: (id, slot, skillIndex) =>
     dev('give', { charId: id, slot, ...(Number.isInteger(skillIndex) ? { skillIndex } : {}) }),
+  /** 全部敌人清单（悬赏下拉用）。 */
+  enemies: () => dev('enemies'),
+  /** 把指定敌人作为悬赏加进【下一波】。coin = 击杀赏金。 */
+  bounty: (enemyKey, count = 1, coin = 2) => dev('bounty', { enemyKey, count, coin }),
+  /** 清空自己的悬赏。 */
+  unbounty: () => dev('unbounty'),
   /** 一键到位：补钱 + 等级拉满 + 刷新商店（自选干员才会真的上架）。 */
   boost: () => dev('boost'),
   /**
@@ -236,7 +242,7 @@ function buildPanel() {
   };
   refreshOps();
 
-  api._reload = async () => { await refreshBonds(); await refreshOps(); return show(); };
+  api._reload = async () => { await refreshBonds(); await refreshOps(); await refreshEnemies(); return show(); };
   // 首次打开时，两个下拉的读取是异步的；若刚好赶上开关/连接未就绪，会留下空下拉。
   // 这里在构建后 700ms 再自动补一次，免去手动点「⟳ 刷新」。
   setTimeout(() => { api._reload().catch(() => {}); }, 700);
@@ -251,6 +257,32 @@ function buildPanel() {
   const skillArg = () => (skillSel.value === '' ? undefined : Number(skillSel.value));
   body.append(row([btn('塞入', () => api.pick(opSel.value, slotSel.value, skillArg())),
     btn('🎁 直接给我', () => api.give(opSel.value, slotSel.value, skillArg()))]));
+
+  // ── 悬赏怪 → 加入下一波 ──
+  body.append(el('div', { marginTop: '6px', color: '#8fd0ff' }, '悬赏怪 → 加进下一波（下场战斗出现）'));
+  const enemySel = el('select', { flex: '1', minWidth: '0', background: '#1d2a3a', color: '#d8e2ee', border: '1px solid #33475e', borderRadius: '4px', padding: '2px' });
+  const cntIn = el('input', { width: '42px', background: '#1d2a3a', color: '#d8e2ee', border: '1px solid #33475e', borderRadius: '4px', padding: '2px 4px' });
+  cntIn.value = '1';
+  const coinIn = el('input', { width: '42px', background: '#1d2a3a', color: '#d8e2ee', border: '1px solid #33475e', borderRadius: '4px', padding: '2px 4px' });
+  coinIn.value = '2';
+  const refreshEnemies = async () => {
+    try {
+      const r = await api.enemies();
+      const list = r.enemies ?? [];
+      if (!list.length) { const ph = el('option', null, '（没读到敌人，点「⟳ 刷新」）'); ph.value = ''; enemySel.replaceChildren(ph); return; }
+      enemySel.replaceChildren(...list.map((e) => {
+        const opt = el('option', null, `${e.name}  (${e.key})`);
+        opt.value = e.key;
+        return opt;
+      }));
+      if ([...enemySel.options].some((o) => o.value === 'enemy_1001_bigbo')) enemySel.value = 'enemy_1001_bigbo';
+    } catch { /* 读不到就留空 */ }
+  };
+  refreshEnemies();
+  body.append(row([enemySel]));
+  body.append(row([el('span', { color: '#7b8ea3' }, '数量'), cntIn, el('span', { color: '#7b8ea3' }, '赏金'), coinIn,
+    btn('加入下一波', () => api.bounty(enemySel.value, Number(cntIn.value) || 1, Number(coinIn.value) || 0)),
+    btn('清空悬赏', () => api.unbounty())]));
   body.append(el('div', { marginTop: '6px', color: '#7b8ea3' }, '仅本机/内网；房间默认限 solo'));
   body.append(log);
   return root;
