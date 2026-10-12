@@ -28,10 +28,13 @@ function fakePlayer({ funds = 10, shopLevel = 1, maxShopLevel = 6, upgradePrice 
     gd: {
       maxShopLevel, upgradeBase: () => upgradePrice,
       raw: {
+        // 生产路径：data/backups.json 挂在 raw.backups 下（dev.js 的 diyOf 优先读这里）
+        backups: {
         diy: {
           ownedPool: ['char_4217_makoto', 'char_112_siege'],
           operators: { char_4217_makoto: { name: '结城理', profession: 'SPECIAL', bonds: ['lateranoShip', 'raidShip'] } },
           slots: { chess_char_6_diy1_a: { tier: 6, shopLevel: 6 } },
+        },
         },
       },
     },
@@ -258,5 +261,7 @@ test('形状契约：每个成功返回都必须带 reply，否则 server/net.js
     const r = handleDev(lobby, SESSION, msg, LOCAL);
     assert.equal(r.ok, true, `${msg.op} 应成功`);
     assert.ok(r.reply && typeof r.reply === 'object', `${msg.op} 必须带 reply（否则数据被丢弃）`);
+    // 客户端 net.js: `typeof msg.t !== 'string' → return`（整帧丢弃）——reply 里必须带 t
+    assert.equal(typeof r.reply.t, 'string', `${msg.op} 的 reply 必须带字符串 t，否则客户端会把整帧丢掉、请求超时`);
   }
 });

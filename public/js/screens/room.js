@@ -70,9 +70,9 @@ function TestModeSwitch({ coop }) {
       })
       .catch((e) => {
         setPhase('');
-        setOn(!want);                       // 回滚
-        if (want) { if (globalThis.__dev && globalThis.__dev.hide) globalThis.__dev.hide(); }
-        else { if (globalThis.__dev && globalThis.__dev.ensure) globalThis.__dev.ensure(); }
+        setOn(!want);                       // 回滚开关状态
+        // 注意：**不**去藏/开面板 —— 失败时把面板收掉会让人以为"面板自己消失了"。
+        // 面板留着，错误显示在旁边，改状态的操作仍会被服务端按门禁拒绝。
         setErr('切换失败：' + errText(e));
         console.warn('[dev] devToggle failed', e);
       });

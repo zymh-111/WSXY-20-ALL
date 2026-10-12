@@ -66,7 +66,7 @@ export function handleDev(lobby, session, msg, ctx = {}) {
   // 开关状态（不需要开关已开，也不要求对局已开始）
   const status = () => ({
     ok: true,
-    reply: {
+    reply: { t: 'dev',
     enabled: devOn(room),
     room: room.mode ?? null,
     localOnly: LOCAL_ONLY,
@@ -101,15 +101,15 @@ export function handleDev(lobby, session, msg, ctx = {}) {
   // 记一下调用者 ip（便于事后追查；不阻断）
   if (ctx.ip) (match.devLog ??= []).push({ t: op, ip: ctx.ip, at: match.time ?? null });
 
-  if (op === 'state') return { ok: true, reply: snapshot(ps) };
-  if (op === 'ops') return { ok: true, reply: { ops: listOps(match, room) } };
+  if (op === 'state') return { ok: true, reply: { t: 'dev', ...snapshot(ps) } };
+  if (op === 'ops') return { ok: true, reply: { t: 'dev', ops: listOps(match, room) } };
 
   switch (op) {
     case 'funds': {
       const n = reqInt(msg, 'n');
       if (n === null) return fail(ERR.BAD_MSG, 'dev: funds needs an integer n');
       const added = ps.addFunds(n, { reason: 'dev' });
-      return { ok: true, reply: { added, funds: ps.funds } };
+      return { ok: true, reply: { t: 'dev', added, funds: ps.funds } };
     }
     case 'level': {
       const n = reqInt(msg, 'n');
@@ -122,7 +122,7 @@ export function handleDev(lobby, session, msg, ctx = {}) {
       }
       return {
         ok: true,
-        reply: {
+        reply: { t: 'dev',
           from, level: ps.shop.level, funds: ps.funds,
           upgradePrice: ps.shop.upgradePrice,
           stopped: ps.shop.level < from + n ? (last?.error ?? null) : null,
@@ -132,7 +132,7 @@ export function handleDev(lobby, session, msg, ctx = {}) {
     case 'refresh': {
       ps.shop.freeRefreshes += 1;
       ps.dirty?.();
-      return { ok: true, reply: { freeRefreshes: ps.shop.freeRefreshes } };
+      return { ok: true, reply: { t: 'dev', freeRefreshes: ps.shop.freeRefreshes } };
     }
     case 'layers': {
       const n = reqInt(msg, 'n');
@@ -140,14 +140,14 @@ export function handleDev(lobby, session, msg, ctx = {}) {
       if (n === null) return fail(ERR.BAD_MSG, 'dev: layers needs an integer n');
       if (!bondId) return fail(ERR.BAD_MSG, 'dev: layers needs bondId');
       ps.addLayers(bondId, n, { requireActive: false, reason: 'dev' });
-      return { ok: true, reply: { bondId, layers: ps.layers?.[bondId] ?? null } };
+      return { ok: true, reply: { t: 'dev', bondId, layers: ps.layers?.[bondId] ?? null } };
     }
     case 'layersAll': {
       const n = reqInt(msg, 'n');
       if (n === null) return fail(ERR.BAD_MSG, 'dev: layersAll needs an integer n');
       const ids = Object.keys(ps.bonds ?? {});
       for (const id of ids) ps.addLayers(id, n, { requireActive: false, reason: 'dev' });
-      return { ok: true, reply: { count: ids.length } };
+      return { ok: true, reply: { t: 'dev', count: ids.length } };
     }
     case 'setLayers': {
       // 直接设成指定层数（可增可减）；层数上限由 layerGainRoom 决定（超出时报 unchanged 而不是假装成功）
@@ -166,7 +166,7 @@ export function handleDev(lobby, session, msg, ctx = {}) {
         ps.recompute?.();
         after = ps.layers?.[bondId] ?? n;
       }
-      return { ok: true, reply: { bondId, from: before, to: after, capped: after !== n } };
+      return { ok: true, reply: { t: 'dev', bondId, from: before, to: after, capped: after !== n } };
     }
     case 'pick': {
       // 自选干员：把某个自选槽换成指定 charId（走游戏自己的 setDiy → 校验 + 重建记录）
@@ -174,7 +174,7 @@ export function handleDev(lobby, session, msg, ctx = {}) {
       const charId = String(msg.charId ?? '');
       if (!slot) return fail(ERR.BAD_MSG, 'dev: pick needs slot（如 chess_char_6_diy1_a）');
       if (!charId) return fail(ERR.BAD_MSG, 'dev: pick needs charId');
-      const pool = match.gd?.raw?.diy?.ownedPool ?? [];
+      const pool = diyOf(match.gd)?.ownedPool ?? [];
       if (pool.length && !pool.includes(charId)) return fail(ERR.BAD_TARGET, `dev: ${charId} is not in the 自选 ownedPool`);
       const picks = { ...(ps.diy ?? {}) };
       picks[slot] = { charId, skillIndex: reqInt(msg, 'skillIndex') ?? 0, uniEquipId: msg.uniEquipId ? String(msg.uniEquipId) : null };
@@ -183,16 +183,16 @@ export function handleDev(lobby, session, msg, ctx = {}) {
       // 刷新自选库存，商店才会按新配置出牌
       try { ps.initDiyStock?.(new Set(match.bannedBondIds ?? [])); } catch { /* 兼容旧签名 */ }
       ps.dirty?.();
-      return { ok: true, reply: { slot, charId, diy: snapshot(ps).diy } };
+      return { ok: true, reply: { t: 'dev', slot, charId, diy: snapshot(ps).diy } };
     }
     case 'opPool': {
       const data = match.gd?.raw ?? null;
-      const pool = data?.diy?.ownedPool ?? [];
+      const pool = diyOf(match.gd)?.ownedPool ?? [];
       const ops = pool.map((id) => {
-        const o = data?.diy?.operators?.[id] ?? {};
+        const o = diyOf(match.gd)?.operators?.[id] ?? {};
         return { charId: id, name: o.name ?? id, profession: o.profession ?? null, bonds: o.bonds ?? [] };
       });
-      return { ok: true, reply: { count: ops.length, ops } };
+      return { ok: true, reply: { t: 'dev', count: ops.length, ops } };
     }
     default:
       return fail(ERR.BAD_MSG, `dev: unknown op ${op.slice(0, 32)}`);
@@ -202,7 +202,7 @@ export function handleDev(lobby, session, msg, ctx = {}) {
 /** 自选槽清单（客户端面板用来做下拉）。 */
 function listOps(match, room) {
   const data = match.gd?.raw ?? null;
-  const slots = data?.diy?.slots ?? {};
+  const slots = diyOf(match.gd)?.slots ?? {};
   return {
     slots: Object.entries(slots).map(([id, s]) => ({ slot: id, tier: s.tier, shopLevel: s.shopLevel })),
     room: room?.mode ?? null,
@@ -210,6 +210,13 @@ function listOps(match, room) {
 }
 
 const reqInt = (msg, k) => (Number.isFinite(msg[k]) ? Math.trunc(msg[k]) : null);
+
+/**
+ * 取本局的 自选(diy) 数据。data/backups.json 的顶层是 `{units, tokens, diy}`，
+ * 但服务端把它加载到 `raw.backups` 这个键下 —— 所以既要试 `raw.backups.diy`（真实路径），
+ * 也兼容 `raw.diy`（万一以后改了挂法）。
+ */
+const diyOf = (gd) => gd?.raw?.backups?.diy ?? gd?.raw?.diy ?? null;
 
 /** 本局已知的盟约 id（当前激活的 + 自己已有的层数，去重排序）——面板用来做下拉。 */
 function knownBonds(ps) {
