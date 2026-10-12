@@ -45,7 +45,8 @@
 //   movement by CONVEYOR_FRAME × CONVEYOR_FPS × dt: the official 0.8 / 30 tile per frame at 卫戍协议's 20 frames per second
 //   (PRTS: 0.533 tiles/s here, not the regular game's 0.8), never into an impassable tile (keeping 0.2 tile off its edge on a
 //   horizontal belt). Every `interval` s, the cast included [ASSUMED], every targetable ground enemy on her tile and the
-//   max_cnt − 1 tiles ahead and every enemy she blocks takes atk_scale × ATK physical; an enemy there whose 侵蚀 bursts
+//   max_cnt − 1 tiles ahead and every enemy she blocks takes atk_scale × ATK physical (隐匿 ones too: the note singles
+//   stealth out only for the carry effect, and the damage clause says 所有地面敌方单位); an enemy there whose 侵蚀 bursts
 //   loses thumpy[ep_break_water].def DEF more — permanent and stacking, as the burst's own −120 [ASSUMED]. The carry skips 免疫传送 units (PRTS 备注末句: 黍/余's immunity — `stats.otherImmunities`, the same reading as chess_char_6_21-clemnt.js).
 
 import { num, talentBb, traitBb, skillRec, up } from '../shared/tier1.js';
@@ -154,10 +155,21 @@ export default {
         if (e.alive) battle.dealDamage(unit, e, { amount: unit.s.atk * num(b2.atk_scale), type: 'phys', isSkill: true, ignoreSelect: true, tags: ['skill', 'thumpy:glue'] });
       }
     };
-    /** S3: the enemies the belt damages — targetable ground enemies on her tile and the tiles ahead, and every one she blocks. */
+    /**
+     * S3: the enemies the belt **damages** — her own tile and the 4 tiles ahead, plus every enemy she blocks.
+     * PRTS 备注把两个效果分开写：「伤害效果影响自身所在格及正前方4格内**所有地面敌方单位**，以及所有被自身阻挡的
+     * 敌方单位」，只在**传送带效果**那一条点明「可影响隐匿」。所以这里不走 enemiesInKeys / canTargetEnemy
+     * （那会按隐匿过滤掉目标），自己扫地面单位 —— 隐匿的也照打（与 S2 的强力胶不同：S2 备注明确排除 隐藏/隐匿/无敌）。
+     */
     const beltVictims = (battle, unit, belt) => {
-      const out = battle.enemiesInKeys(belt.hurtKeys, unit, { canHitFly: false });
-      for (const e of battle.blockedTargets(unit, unit.profile)) if (!out.includes(e)) out.push(e);
+      const out = [];
+      for (const e of battle.enemies) {
+        if (!e.alive || e.hidden || e.isFlying || !hasHp(e)) continue;
+        if (!bodyInKeys(e, belt.hurtSet)) continue;
+        if (e.s.flags.invulnerable) continue;   // 无敌本来也吃不到伤害，省掉无谓的结算
+        out.push(e);
+      }
+      for (const e of unit.blocking ?? []) if (e && e.alive && !e.hidden && !out.includes(e)) out.push(e);
       return out;
     };
     /** S3: the conveyor carries the unblocked ground enemies on its tiles towards her (after their own movement). */

@@ -376,3 +376,20 @@ test('S3 belt: 免疫传送 的单位（黍/余）不被搬运，但仍吃传送
     done(h);
   }
 });
+
+test('S3 belt damage: 隐匿 单位**照吃**传送带伤害（PRTS 把两个效果分开写，伤害写的是"所有地面敌方单位"）', () => {
+  // 对照：S2 的强力胶备注明确排除 隐藏/隐匿/无敌 —— 两者不同，这条锁住 S3 的行为。
+  for (const [tier, elite] of [[5, false], [6, true]]) {
+    const { h, u } = field({ tier, elite, skill: 2, col: 4 });
+    noSp(h, u);
+    const sneak = h.spawn('enemy_m1', { pos: [10, 7] });          // 传送带第 3 格
+    h.b.addBuff(sneak, { key: 'test:stealth', flags: { stealth: true } });
+    h.step();
+    u.skill.addCharge(1);
+    u.skill.activate('test');
+    const hits = () => h.hooksOf('damaged').filter((c) => c.source === u && c.target === sneak && c.dmg.tags?.includes('thumpy:belt'));
+    h.run(1);
+    assert.ok(hits().length >= 1, `T${tier}: 隐匿单位也吃传送带伤害（${hits().length} 次）`);
+    done(h);
+  }
+});
