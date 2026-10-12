@@ -47,8 +47,9 @@ const api = {
   opPool: () => dev('opPool'),
   /** 槽位与房间信息（含放宽开关状态）。 */
   ops: () => dev('ops'),
-  /** 重新读状态并刷新两个下拉（面板上「⟳ 刷新」用）。 */
-  refresh: () => api._reload ? api._reload() : Promise.resolve(),
+  /** 重新读状态并刷新两个下拉（面板上「⟳ 刷新」用）。
+   *  注意别叫 refresh —— 那个名字属于服务端的「免费刷新」op。 */
+  reload: () => api._reload ? api._reload() : Promise.resolve(),
   /** 后门开关状态（不需要开关已开）。 */
   devStatus: () => dev('devStatus'),
   /** 开/关本房间的后门开关。 */
@@ -206,7 +207,7 @@ function buildPanel() {
 
   api._reload = async () => { await refreshBonds(); await refreshOps(); return show(); };
   body.append(status);
-  body.append(row([btn('⟳ 刷新', () => api._reload()), btn('+500 资金', () => api.funds(500))]));
+  body.append(row([btn('⟳ 刷新', () => api.reload()), btn('+500 资金', () => api.funds(500))]));
   body.append(row([btn('+1 等级', () => api.level(1)), btn('+5 等级', () => api.level(5)), btn('免费刷新', () => api.refresh())]));
   body.append(row([bondSel, layerNum, btn('设层数', () => api.setLayers(bondSel.value, Number(layerNum.value) || 0))]));
   body.append(row([btn('全盟约 +3', () => api.layersAll(3))]));

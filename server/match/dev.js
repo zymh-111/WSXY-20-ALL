@@ -90,10 +90,17 @@ export function handleDev(lobby, session, msg, ctx = {}) {
   if (LOCAL_ONLY && !ctx.isLocal) return fail(ERR.BAD_TARGET, 'dev: local/LAN only (DSH_DEV_LOCAL_ONLY=1)');
   if (room.mode !== 'solo') return fail(ERR.BAD_TARGET, 'dev: solo rooms only');
 
+  // 自己的 PlayerState（只读与改状态都要用；注意必须在下面的只读分支之前取，
+  // 否则 state 分支会引用尚未初始化的 ps —— const 的 TDZ 会抛错并被包成 INTERNAL）
+  const ps = match?.players?.get?.(session.playerId) ?? null;
+
   // ── 只读操作：**不要求开关已开** ─────────────────────────────────────────────
   // 读状态/读自选池本身不改变任何东西，而且面板正是靠它们填下拉框的。
   // （曾经把它们放在开关检查之后，导致面板在开关生效前构建 → 读到空池 → 下拉一片空白。）
-  if (op === 'state') return { ok: true, reply: { t: 'dev', ...snapshot(ps) } };
+  if (op === 'state') {
+    if (!ps) return fail(ERR.BAD_TARGET, 'dev: no player state');
+    return { ok: true, reply: { t: 'dev', ...snapshot(ps) } };
+  }
   if (op === 'ops') return { ok: true, reply: { t: 'dev', ops: listOps(match, room) } };
   if (op === 'opPool') {
     const pool = diyOf(match.gd)?.ownedPool ?? [];
@@ -107,7 +114,6 @@ export function handleDev(lobby, session, msg, ctx = {}) {
   // ── 以下是会改状态的操作：还要求开关已开 + 对局已开始 + 自己的座位 ──────────
   if (!devOn(room)) return fail(ERR.BAD_TARGET, 'dev: 后门开关未开启（先在面板点「开启后门」）');
   if (!match) return fail(ERR.BAD_TARGET, 'dev: the match has not started');
-  const ps = match.players?.get?.(session.playerId) ?? null;
   if (!ps) return fail(ERR.BAD_TARGET, 'dev: no player state');
 
   // 记一下调用者 ip（便于事后追查；不阻断）
