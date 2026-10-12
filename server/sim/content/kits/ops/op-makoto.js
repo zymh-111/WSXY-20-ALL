@@ -94,18 +94,6 @@ function makoto(bb, raw, def) {
   const curId = () => def?.skill?.id ?? def?.skill?.skillId ?? raw?.skill?.skillId ?? null;
   const bbCur = (id) => (curId() === id ? bb : bbOf(id));
 
-/** 当前技能的可读名（日志用；必须放在闭包内 —— 它依赖 curId）。 */
-  const skillName = () => {
-    const id = curId();
-    return id === S1 ? 'S1' : id === S2 ? 'S2' : id === S3 ? 'S3' : String(id);
-  };
-
-  /** [TEMP-LOG] 形态切换的可观测日志（排查用，撤掉时搜 TEMP-LOG）。同样必须在闭包内。 */
-  const logSwitch = (battle, unit, from, to, extra = '') => {
-    const inv = unit.s?.flags?.invulnerable ? 'invuln' : '-';
-    console.log(`[makoto] 形态 ${from} → ${to} | 技能=${skillName()} t=${battle.time.toFixed(2)} `
-      + `hp=${Math.round(unit.hp)}/${Math.round(unit.s?.maxHp ?? 0)} ${inv}${extra ? ' | ' + extra : ''}`);
-  };
   const s1 = bbCur(S1), s2 = bbCur(S2), s3 = bbCur(S3);
   const inDoll = (u) => !!u.trait?.doll;
   /** 该形态的攻击范围钥匙（替身是 13 格菱形，本体是近战 2 格 —— 见 DOLL_RANGE_GRID）。 */
@@ -283,7 +271,6 @@ function makoto(bb, raw, def) {
     const phase = unit.mem.makotoPhase ?? 0;
     // 形态3 → 形态2：俄耳甫斯在场时再开一次技能，切回塔纳托斯
     if (unit.trait?.doll && phase === 3) {
-      logSwitch(battle, unit, '俄耳甫斯(phase 3)', '塔纳托斯(phase 2)', '切回');
       unit.mem.makotoPhase = 2;
       unit.mem.makotoDoll = 'thanatos';
       unit.skill?.setTrigger?.('SKILL_RANGE');   // 形态2 恢复自动开启
@@ -295,7 +282,6 @@ function makoto(bb, raw, def) {
     // 形态2 → 形态3：塔纳托斯在场时开技能，切到俄耳甫斯（S3 专属）
     if (unit.trait?.doll && phase === 2) {
       if (cur !== S3) return;                    // S1/S2 没有第三形态
-      logSwitch(battle, unit, '塔纳托斯(phase 2)', '俄耳甫斯(phase 3)', '开技能切换 + 补保护窗口');
       unit.mem.makotoPhase = 3;
       unit.mem.makotoDoll = 'orpheus';
       unit.skill?.setTrigger?.('NEVER');         // 形态3 不自动开技能
@@ -317,7 +303,6 @@ function makoto(bb, raw, def) {
     if (unit.trait?.doll) return;
     // 形态1 → 形态2（或 S1 直达俄耳甫斯）：开技能切入替身
     const toPhase = cur === S1 ? 3 : 2;
-    logSwitch(battle, unit, `本体(phase ${phase})`, `${toPhase === 3 ? '俄耳甫斯' : '塔纳托斯'}(phase ${toPhase})`, '开技能');
     unit.mem.makotoPhase = toPhase;
     unit.mem.makotoDoll = cur === S1 ? 'orpheus' : 'thanatos';
     battle.emit('dollSwitch', { unit, reason: 'skill', done: false });
@@ -354,8 +339,6 @@ function makoto(bb, raw, def) {
             const cur0 = curId();
             unit.mem.makotoPhase = cur0 === S1 ? 3 : 2;
             unit.mem.makotoDoll = cur0 === S1 ? 'orpheus' : 'thanatos';
-            console.log(`[makoto] （引擎路径进替身）补记形态 phase=${unit.mem.makotoPhase} `
-              + `doll=${unit.mem.makotoDoll} 技能=${skillName()}`);
           }
           applyDollRange(battle, unit); applyTalentMods(battle, unit); installDollAttack(battle, unit);
         } else {
@@ -372,9 +355,6 @@ function makoto(bb, raw, def) {
       // 所以这条由 kit 接管：默认优先级 0 高于引擎那条 -100，先跑并把 ctx.prevented 置上，引擎就不会再判死。
       battle.on('fatal', (ctx) => {
         if (ctx.unit !== unit) return;
-        // [TEMP-LOG2] 无论接管与否都先记一行：doll/phase/技能/prevented 一看就知道条件卡在哪
-        console.log(`[makoto] fatal 钩子 | 技能=${skillName()} doll=${!!unit.trait?.doll} `
-          + `phase=${unit.mem.makotoPhase ?? 0} prevented=${ctx.prevented} t=${battle.time.toFixed(2)}`);
         if (ctx.prevented) return;
         if (!unit.trait?.doll) {
           // 本体受致命伤：引擎马上会 enter() 并随 substitute fx 下发形态名。
@@ -388,8 +368,6 @@ function makoto(bb, raw, def) {
         }
         if ((unit.mem.makotoPhase ?? 0) !== 2) return;   // 只处理"替身·塔纳托斯"阶段
         if (curId() !== S3) return;                                          // 只有 S3 有第二形态
-        console.log(`[makoto] 致命伤接管（引擎本会击倒替身）| t=${battle.time.toFixed(2)} hp=${Math.round(unit.hp)}`
-          + ` phase=${unit.mem.makotoPhase} → 改为召唤俄耳甫斯`);
         ctx.prevented = true;
         switchToDoll(battle, unit);        // phase 2 → 3（内部会设 trigger、加阻挡 buff、补切换保护、发 fx）
         unit.hp = unit.s.maxHp;            // 与特性切进替身一致：「切换途中重设自身生命至最大值」
