@@ -43,14 +43,16 @@ const api = {
   layersAll: (n = 1) => dev('layersAll', { n }),
   /** 直接设成指定层数（可增可减）。 */
   setLayers: (bondId, n) => dev('setLayers', { bondId, n }),
-  /** 自选槽换成指定干员（槽位为空则用六阶 diy1）。 */
-  pick: (charId, slot = 'chess_char_6_diy1_a', skillIndex = 0) => dev('pick', { slot, charId, skillIndex }),
+  /** 自选槽换成指定干员。skillIndex 不传 = 保持该槽位原有的技能选择。 */
+  pick: (charId, slot = 'chess_char_6_diy1_a', skillIndex) =>
+    dev('pick', { slot, charId, ...(Number.isInteger(skillIndex) ? { skillIndex } : {}) }),
   /** 自选池清单（面板下拉用）。 */
   opPool: () => dev('opPool'),
   /** 槽位与房间信息（含放宽开关状态）。 */
   ops: () => dev('ops'),
   /** 直接给我：把该槽位的干员直接塞进手牌（走游戏自己的 buy）。 */
-  give: (id, slot) => dev('give', { charId: id, slot }),
+  give: (id, slot, skillIndex) =>
+    dev('give', { charId: id, slot, ...(Number.isInteger(skillIndex) ? { skillIndex } : {}) }),
   /** 一键到位：补钱 + 等级拉满 + 刷新商店（自选干员才会真的上架）。 */
   boost: () => dev('boost'),
   /**
@@ -199,6 +201,11 @@ function buildPanel() {
   // ── 自选干员：下拉选池子里的干员 → 塞进六阶自选槽 ──
   const opSel = el('select', { flex: '1', background: '#1d2a3a', color: '#d8e2ee', border: '1px solid #33475e', borderRadius: '4px', padding: '2px' });
   const slotSel = el('select', { width: '74px', background: '#1d2a3a', color: '#d8e2ee', border: '1px solid #33475e', borderRadius: '4px', padding: '2px' });
+  // 技能选择：不选 = 保持槽位原有选择（关键！结城理 S1 的替身是俄耳甫斯，S2 是塔纳托斯）
+  const skillSel = el('select', { width: '64px', background: '#1d2a3a', color: '#d8e2ee', border: '1px solid #33475e', borderRadius: '4px', padding: '2px' });
+  for (const [label, val] of [['技能保持', ''], ['S1', '0'], ['S2', '1'], ['S3', '2']]) {
+    const o = el('option', null, label); o.value = val; skillSel.append(o);
+  }
   const refreshOps = async () => {
     try {
       const pool = await api.opPool();
@@ -240,9 +247,10 @@ function buildPanel() {
   body.append(row([bondSel, layerNum, btn('设层数', () => api.setLayers(bondSel.value, Number(layerNum.value) || 0))]));
   body.append(row([btn('全盟约 +3', () => api.layersAll(3))]));
   body.append(el('div', { marginTop: '6px', color: '#8fd0ff' }, '自选干员 → 塞进槽位（选完点“塞入”）'));
-  body.append(row([slotSel, opSel]));
-  body.append(row([btn('塞入', () => api.pick(opSel.value, slotSel.value)),
-    btn('🎁 直接给我', () => api.give(opSel.value, slotSel.value))]));
+  body.append(row([slotSel, skillSel, opSel]));
+  const skillArg = () => (skillSel.value === '' ? undefined : Number(skillSel.value));
+  body.append(row([btn('塞入', () => api.pick(opSel.value, slotSel.value, skillArg())),
+    btn('🎁 直接给我', () => api.give(opSel.value, slotSel.value, skillArg()))]));
   body.append(el('div', { marginTop: '6px', color: '#7b8ea3' }, '仅本机/内网；房间默认限 solo'));
   body.append(log);
   return root;

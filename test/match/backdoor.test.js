@@ -354,3 +354,21 @@ test('pick 在【对局开始前】也能用：写房间座位（开局时 setDi
   assert.deepEqual(lobby._seat.diy.chess_char_6_diy1_a,
     { charId: 'char_4217_makoto', skillIndex: 2, uniEquipId: null }, '写进了房间座位');
 });
+
+test('pick 未指定技能时【沿用】该槽位原有的 skillIndex（不能默认写成 S1）', () => {
+  // 结城理 S1 的替身是俄耳甫斯、S2 是塔纳托斯、S3 是塔纳托斯→俄耳甫斯。
+  // 若后门把用户选好的 S3 顺手写成 S1，表现就是"一开技能直接变成俄耳甫斯"。
+  const ps = fakePlayer();
+  ps.diy = { chess_char_6_diy1_a: { charId: 'char_4217_makoto', skillIndex: 2, uniEquipId: null } };
+  const lobby = withDev(fakeLobby({ ps }));
+  // 换成另一个干员，但不给 skillIndex → 应当沿用 2
+  const res = dev(lobby, SESSION, { op: 'pick', slot: 'chess_char_6_diy1_a', charId: 'char_112_siege' }, LOCAL);
+  assert.equal(res.ok, true);
+  const call = ps.calls.find((c) => c[0] === 'setDiy');
+  assert.equal(call[1].chess_char_6_diy1_a.skillIndex, 2, '沿用了原有的 skillIndex=2（S3）');
+  // 显式给技能时以显式为准
+  const res2 = dev(lobby, SESSION, { op: 'pick', slot: 'chess_char_6_diy1_a', charId: 'char_112_siege', skillIndex: 0 }, LOCAL);
+  assert.equal(res2.ok, true);
+  const call2 = ps.calls.filter((c) => c[0] === 'setDiy').pop();
+  assert.equal(call2[1].chess_char_6_diy1_a.skillIndex, 0, '显式给 0 时用 0');
+});

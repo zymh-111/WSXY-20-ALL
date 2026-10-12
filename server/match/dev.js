@@ -136,7 +136,8 @@ export function handleDev(lobby, session, msg, ctx = {}) {
     if (!slot0) return fail(ERR.BAD_MSG, 'dev: pick needs slot');
     if (!charId0) return fail(ERR.BAD_MSG, 'dev: pick needs charId');
     const pool0 = diyOf(match?.gd)?.ownedPool ?? diyOf(lobby.safeData?.())?.ownedPool ?? null;
-    const picks0 = { ...(session.diy ?? {}), [slot0]: { charId: charId0, skillIndex: reqInt(msg, 'skillIndex') ?? 0, uniEquipId: msg.uniEquipId ? String(msg.uniEquipId) : null } };
+    const prev0 = (session.diy ?? {})[slot0] ?? null;
+    const picks0 = { ...(session.diy ?? {}), [slot0]: { charId: charId0, skillIndex: pickSkillIndex(msg, prev0), uniEquipId: msg.uniEquipId ? String(msg.uniEquipId) : prev0?.uniEquipId ?? null } };
     if (pool0 && !pool0.includes(charId0)) return fail(ERR.BAD_TARGET, `dev: ${charId0} is not in the 自选 ownedPool`);
     let r0 = null;
     try { r0 = lobby.diy?.(session, { picks: picks0 }) ?? 'no-handler'; } catch (e) { r0 = 'throw:' + String(e && e.message); }
@@ -253,7 +254,8 @@ export function handleDev(lobby, session, msg, ctx = {}) {
         : normSlots.find(picked) ?? normSlots[normSlots.length - 1]);
       // 需要时先把 pick 写好（局中写 ps.diy；局外写房间座位）
       if (!picked(slot)) {
-        const picks = { ...(ps.diy ?? session.diy ?? {}), [slot]: { charId: target, skillIndex: reqInt(msg, 'skillIndex') ?? 0, uniEquipId: msg.uniEquipId ? String(msg.uniEquipId) : null } };
+        const prevG = (ps.diy ?? session.diy ?? {})[slot] ?? null;
+        const picks = { ...(ps.diy ?? session.diy ?? {}), [slot]: { charId: target, skillIndex: pickSkillIndex(msg, prevG), uniEquipId: msg.uniEquipId ? String(msg.uniEquipId) : prevG?.uniEquipId ?? null } };
         if (!match) {
           try { lobby.diy?.(session, { picks }); } catch { /* 忽略 */ }
         } else {
@@ -351,7 +353,8 @@ export function handleDev(lobby, session, msg, ctx = {}) {
       const pool = diyOf(match.gd)?.ownedPool ?? [];
       if (pool.length && !pool.includes(charId)) return fail(ERR.BAD_TARGET, `dev: ${charId} is not in the 自选 ownedPool`);
       const picks = { ...(ps.diy ?? {}) };
-      picks[slot] = { charId, skillIndex: reqInt(msg, 'skillIndex') ?? 0, uniEquipId: msg.uniEquipId ? String(msg.uniEquipId) : null };
+      const prevPick = picks[slot] ?? null;
+      picks[slot] = { charId, skillIndex: pickSkillIndex(msg, prevPick), uniEquipId: msg.uniEquipId ? String(msg.uniEquipId) : prevPick?.uniEquipId ?? null };
       const ok = ps.setDiy?.(picks);
       if (!ok) return fail(ERR.BAD_TARGET, 'dev: setDiy refused（槽位/干员不合法，或该干员没有 kit）');
       // 刷新自选库存，商店才会按新配置出牌
@@ -385,6 +388,19 @@ function listOps(match, room) {
 }
 
 const reqInt = (msg, k) => (Number.isFinite(msg[k]) ? Math.trunc(msg[k]) : null);
+
+/**
+ * 该用哪个 skillIndex。
+ * ⚠️ 绝不能默认写成 0(S1)：结城理 S1 的替身是**俄耳甫斯**，S2 才是塔纳托斯，S3 是二段形态 ——
+ * 用户在干员调配里选好 S3 后，如果后门"塞入/直接给我"顺手把它写成 S1，
+ * 表现就是"一开技能直接变成俄耳甫斯"。所以：显式给的优先，否则**沿用该槽位原有的选择**。
+ */
+const pickSkillIndex = (msg, prev) => {
+  const explicit = reqInt(msg, 'skillIndex');
+  if (explicit !== null) return explicit;
+  if (prev && Number.isInteger(prev.skillIndex)) return prev.skillIndex;
+  return 0;
+};
 
 /**
  * 取本局的 自选(diy) 数据。data/backups.json 的顶层是 `{units, tokens, diy}`，
