@@ -217,7 +217,7 @@ test('S2 rider: while the glue lies, another operator\'s physical damage to an e
   }
 });
 
-test('S3 “不准走！” (60 s): block +2, strikes every blocked enemy, ATK +65 % / +80 %, DEF +75 % / +105 %; the belt carries unblocked ground enemies of 重量 ≤ 4 on the 4 tiles ahead towards her at 0.8 × 20 / 30 tile/s; heavier ones, flyers and blocked ones stay', () => {
+test('S3 “不准走！” (60 s): block +2, strikes every blocked enemy, ATK +65 % / +80 %, DEF +75 % / +105 %; the belt carries unblocked ground enemies of 重量 ≤ 4 on the 4 tiles ahead towards her at 0.8 tile/s (owner: the skill text wins over PRTS 20 fps footnote); heavier ones, flyers and blocked ones stay', () => {
   for (const [tier, elite] of [[5, false], [6, true]]) {
     const sk = skillOf(tier, elite, S3);
     assert.deepEqual([sk.duration, sk.spCost, sk.bb.atk, sk.bb.def, sk.bb.block_cnt, sk.bb.conveyor_speed, sk.bb.mass_level, sk.bb.max_cnt, sk.bb.interval],
@@ -234,7 +234,7 @@ test('S3 “不准走！” (60 s): block +2, strikes every blocked enemy, ATK +
     assert.deepEqual(sortN(u.mem.thumpyBelt.carryKeys), sortN([K(10, 5), K(10, 6), K(10, 7), K(10, 8)]), `T${tier}: the belt`);
     const x0 = m4.x;
     h.run(1);
-    approx(x0 - m4.x, (0.8 * 20) / 30, `T${tier}: 0.533 tile in a second`, 1e-3);
+    approx(x0 - m4.x, 0.8, `T${tier}: 每秒 0.8 格（业主按技能描述定稿）`, 1e-3);
     assert.deepEqual([m5.x, fly.x, past.x], [8, 6, 9], `T${tier}: 重量 5, the flyer and the enemy past the belt stay`);
     assert.ok(h.runUntil(() => m4.blockedBy === u, 6), `T${tier}: carried until she blocks it`);
     const xb = m4.x;

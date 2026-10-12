@@ -42,9 +42,9 @@
 // - S3 “不准走！” (MANUAL; DEFAULT): `duration` s — block +block_cnt, strikes every blocked enemy at once, ATK / DEF +. The
 //   conveyor: the passable tiles among the max_cnt − 1 tiles ahead of her (not hers); every tick each unblocked ground enemy
 //   standing on one (by its centre tile), 重量 ≤ mass_level, not 自缚 — 隐匿 ones too — is carried towards her after its own
-//   movement by CONVEYOR_FRAME × CONVEYOR_FPS × dt: the official 0.8 / 30 tile per frame at 卫戍协议's 20 frames per second
-//   (PRTS: 0.533 tiles/s here, not the regular game's 0.8), never into an impassable tile (keeping 0.2 tile off its edge on a
-//   horizontal belt). Every `interval` s, the cast included [ASSUMED], every targetable ground enemy on her tile and the
+//   movement by CONVEYOR_FRAME × CONVEYOR_FPS × dt = 0.8 tiles/s — [CUSTOM] the owner's decision: the skill text's
+//   "以每秒 0.8 格的速度" wins over PRTS's per-frame footnote (which would give 0.533 at 卫戍协议's 20 fps); never into an
+//   impassable tile (keeping 0.2 tile off its edge on a horizontal belt). Every `interval` s, the cast included [ASSUMED], every targetable ground enemy on her tile and the
 //   max_cnt − 1 tiles ahead and every enemy she blocks takes atk_scale × ATK physical (隐匿 ones too: the note singles
 //   stealth out only for the carry effect, and the damage clause says 所有地面敌方单位); an enemy there whose 侵蚀 bursts
 //   loses thumpy[ep_break_water].def DEF more — permanent and stacking, as the burst's own −120 [ASSUMED]. The carry skips 免疫传送 units (PRTS 备注末句: 黍/余's immunity — `stats.otherImmunities`, the same reading as chess_char_6_21-clemnt.js).
@@ -61,8 +61,14 @@ const S2 = 'skchr_thumpy_2';
 const S3 = 'skchr_thumpy_3';
 /** PRTS S3 备注: the conveyor carries 0.8 / 30 tile per frame ("传送带矢量"; conveyor_speed / 30) … */
 const CONVEYOR_FRAMES = 30;
-/** … and 卫戍协议 runs 20 frames per second ("如果游戏的实际运行帧率发生改变（例如卫戍协议为每秒20帧），位移量也将随之变化"). */
-const CONVEYOR_FPS = 20;
+/**
+ * [CUSTOM] 业主决定（2026-10-12）：**按技能描述的字面值 —— 每秒 0.8 格**，不做帧率折算。
+ * PRTS 备注确实写着"每帧 0.8/30 格"，并举例说卫戍协议 20 帧 ⇒ 位移随之变化（0.533 格/秒）；
+ * 但技能描述本身写的是"以每秒 0.8 格的速度移向珊比"，业主以描述为准。
+ * 因此这里取 30（= 用回常态帧率），`conveyor_speed / 30 × 30` = 0.8 格/秒。
+ * 想改回 PRTS 折算：把 CONVEYOR_FPS 改回 20 即可（得到 0.533）。
+ */
+const CONVEYOR_FPS = 30;
 /** PRTS S3 备注: a horizontal belt keeps its enemies 0.2 tile off the edge of an impassable tile. */
 const BELT_EDGE = 0.2;
 /** "占据4格" / "向前展开4格" when the blackboard has no max_cnt (it counts her own tile too: max_cnt − 1). */
