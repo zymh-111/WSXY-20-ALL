@@ -300,9 +300,15 @@ function clemnt(bb, raw, def) {
           profile: AIR,
         }]);
       }
-      battle.on('elementBurst', ({ target, element }) => {
+      battle.on('elementBurst', ({ source, target, element }) => {
         if (element !== 'erosion' || !up(unit) || !unit.skill?.active || unit.skill.id !== S3
           || !canTargetEnemy(unit, target, GROUND)) return;
+        // 官方："当**全场有敌人**侵蚀损伤爆发时，消耗1发弹药…" —— 指外部的爆发。
+        // ⚠️ 必须排除"由她自己造成的爆发"：齐射里那段 ep_damage_scale 元素伤害会填元素条，
+        // 条满 → 再次 elementBurst（source = 她自己）→ 又标记 → 又齐射，连环下去。
+        // 实测一次外部爆发会被放大成 3 次齐射、连扣 3 发弹药（引擎 damage.js 也注明 burst 在
+        // "<el>Burst lock 建立之前"就跑了钩子，所以自己造成的爆发也会进来）。
+        if (source === unit) return;
         // 侵蚀爆发 → one lock: 1 s (bb ep_break_duration), then a 3-shell barrage on that tile.
         unit.mem.clemntBombs?.marks.set(target, battle.time + num(b3.ep_break_duration, 1));
       }, { owner: unit });
