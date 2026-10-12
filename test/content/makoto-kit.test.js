@@ -332,9 +332,10 @@ test('天赋 2 S.E.E.S.队长：<替身>结束后对周围敌人造成 450% 攻�
   checkInvariants(h.b);
 });
 
-test('切换替身动画期间无敌 0.25s：窗口内打不掉血，窗口后恢复（官方观测 0.2~0.3s）', () => {
+test('切换替身动画期间无敌：整段动画（1 s）都不掉血，动画结束才恢复', () => {
+  // 业主决定：无敌按原样覆盖整段切换动画（此前被改成 0.25 s，已还原）。
   const invuln = (u) => u.s?.flags?.invulnerable === true || (u.hasFlag?.('invulnerable') ?? false);
-  const h = put(2);                       // S2 塔纳托斯
+  const h = put(2);                       // S3
   const u = ready(h);
   const foe = h.spawn('enemy_dummy', { pos: [10, 5] });
   assert.ok(foe, '敌人已就位');
@@ -343,24 +344,66 @@ test('切换替身动画期间无敌 0.25s：窗口内打不掉血，窗口后�
   assert.equal(u.skill.activate('test', { free: true }), true, '开技能 → 切替身');
   h.step(1);
   assert.equal(invuln(u), true, '切换动画期间无敌');
-  assert.ok(u.findBuff('trait:dollInvuln'), '挂的是引擎的 trait:dollInvuln（无敌被拆成单独一条）');
+  assert.ok(u.findBuff('trait:dollSwitching'), '无敌来自切换窗口 buff（trait:dollSwitching）');
 
-  // 无敌期间挨打：一点血都不掉
   const hp0 = u.hp;
   h.b.dealDamage(foe, u, { amount: 5000, type: 'phys', canDodge: false });
   assert.equal(u.hp, hp0, `无敌期间伤害被完全挡掉（${hp0} → ${u.hp}）`);
 
-  // 过了无敌窗口就恢复常态 —— 但切换窗口本身（1 s 动画）还没结束
-  h.run(0.4);
-  assert.equal(invuln(u), false, '无敌窗口（0.25s）结束后不再无敌');
-  assert.ok(u.findBuff('trait:dollSwitching'), '切换动画的窗口仍在（1 s）—— 不死/阻回/禁疗/缴械/眩晕免疫照旧');
+  h.run(0.5);
+  assert.equal(invuln(u), true, '0.5 s 时仍无敌（窗口覆盖整段 1 s 动画）');
   const hp1 = u.hp;
   h.b.dealDamage(foe, u, { amount: 300, type: 'phys', canDodge: false });
-  assert.ok(u.hp < hp1, `无敌结束后正常受伤（${hp1} → ${u.hp}）`);
+  assert.equal(u.hp, hp1, '仍然挡掉');
 
-  // 整个切换窗口结束时，那条 buff 才消失
-  h.run(1.2);
+  h.run(0.7);
   assert.ok(!u.findBuff('trait:dollSwitching'), '动画结束后切换窗口关闭');
-  assert.equal(invuln(u), false, '之后仍不是无敌');
+  assert.equal(invuln(u), false, '之后不再无敌');
+  const hp2 = u.hp;
+  h.b.dealDamage(foe, u, { amount: 300, type: 'phys', canDodge: false });
+  assert.ok(u.hp < hp2, `窗口后正常受伤（${hp2} → ${u.hp}）`);
+  checkInvariants(h.b);
+});
+
+test('S3：塔纳托斯在场时【受到致命伤】→ 改为召唤俄耳甫斯（PRTS S3 描述 + 备注）', () => {
+  // PRTS S3 描述：「塔纳托斯在场时，开启技能或受到致命伤时改为召唤俄耳甫斯」；
+  // S3 备注：「<塔纳托斯·改>…依旧可以触发特性并切换至<俄耳甫斯·改>」。
+  // 引擎的傀儡师分支不认这条（替身再受致命伤直接算击倒），由 kit 的 fatal 钩子接管。
+  const h = put(2);                       // S3
+  const u = ready(h);
+  assert.equal(u.skill.activate('test', { free: true }), true, '开技能 → 塔纳托斯');
+  h.step(1);
+  assert.equal(u.mem.makotoPhase, 2, '先进形态2');
+  assert.equal(u.mem.makotoDoll, 'thanatos', '是塔纳托斯');
+
+  // 受到致命伤
+  u.hp = 1;
+  h.b.emit('fatal', { unit: u, prevented: false });
+  h.step(1);
+  assert.equal(u.alive, true, '没有撤退/阵亡');
+  assert.equal(u.mem.makotoPhase, 3, '切换到了形态3');
+  assert.equal(u.mem.makotoDoll, 'orpheus', '召唤的是俄耳甫斯');
+  assert.equal(u.hp, u.s.maxHp, '切换时把生命重设至最大值');
+  checkInvariants(h.b);
+});
+
+test('S3：塔纳托斯 → 俄耳甫斯 的这次切换【也有无敌】（引擎的保护不覆盖 kit 自己的切换）', () => {
+  const invuln = (u) => u.s?.flags?.invulnerable === true || (u.hasFlag?.('invulnerable') ?? false);
+  const h = put(2);                       // S3
+  const u = ready(h);
+  const foe = h.spawn('enemy_dummy', { pos: [10, 5] });
+  assert.equal(u.skill.activate('test', { free: true }), true, '开技能 → 塔纳托斯');
+  h.step(1);
+  // 形态2 中再开一次 → 俄耳甫斯
+  assert.equal(u.skill.activate('test', { free: true }), true, '塔纳托斯在场时再开一次');
+  h.step(1);
+  assert.equal(u.mem.makotoPhase, 3, '切到了俄耳甫斯');
+  assert.ok(u.findBuff('makoto:formSwitch'), 'kit 补了这次切换的保护窗口');
+  assert.equal(invuln(u), true, '这次切换期间也无敌');
+  const hp0 = u.hp;
+  h.b.dealDamage(foe, u, { amount: 5000, type: 'phys', canDodge: false });
+  assert.equal(u.hp, hp0, '无敌期间伤害被完全挡掉');
+  h.run(1.2);
+  assert.equal(invuln(u), false, '窗口结束后恢复');
   checkInvariants(h.b);
 });

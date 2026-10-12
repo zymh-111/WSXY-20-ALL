@@ -201,11 +201,6 @@ const installCharger = (battle, unit) => {
  */
 export const DOLL_SWITCH = 1;
 const DOLL_SWITCH_IMMUNE = new Set(['stun', 'freeze', 'sleep']);
-/**
- * 切换动画里的**无敌**只持续这么久（秒）—— 官方观测约 0.2~0.3 s，而动画本身是 DOLL_SWITCH(1 s)。
- * 所以无敌被拆成单独的 buff：其余效果（不死/阻回/禁疗/孤立/强制缴械/眩晕免疫）仍覆盖整段动画。
- */
-const DOLL_INVULN = 0.25;
 
 const installDollkeeper = (battle, unit) => {
   // the 替身's max HP comes from the unit's own 替身 token (风丸 纸偶) for its selected skill / module (DESIGN §16); a
@@ -237,13 +232,7 @@ const installDollkeeper = (battle, unit) => {
       key: 'trait:dollSwitching', duration: DOLL_SWITCH, onExpire: ended, onRemove: done,
       // noHeal refuses another unit's heal; healFree is 禁疗 (damage.js: a self-heal is 0 too, regen excepted). The
       // window still ends at full HP — onExpire writes it, it does not heal.
-      // 无敌不在这里：它只有 DOLL_INVULN 秒（下面那条 buff），其余效果覆盖整段动画。
-      flags: { noSp: true, noHeal: true, healFree: true, isolated: true, disarm: true },
-    });
-    // 切换动画期间的**无敌**：官方约 0.2~0.3 s（比动画短），所以单独一条。
-    battle.addBuff(unit, {
-      key: 'trait:dollInvuln', duration: DOLL_INVULN, visible: true,
-      flags: { invulnerable: true },
+      flags: { invulnerable: true, noSp: true, noHeal: true, healFree: true, isolated: true, disarm: true },
     });
   };
   const leave = () => {

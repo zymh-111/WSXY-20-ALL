@@ -37,6 +37,18 @@ const S1 = 'skchr_makoto_1', S2 = 'skchr_makoto_2', S3 = 'skchr_makoto_3';
 /** <替身>形态的切换动画时长（引擎 professions.js DOLL_SWITCH）。 */
 const DOLL_SWITCH = 1;
 
+/**
+ * <替身>→<替身> 的形态切换（塔纳托斯 → 俄耳甫斯）由 kit 自己完成，**不走引擎的 enter()/leave()**，
+ * 因此引擎那套"切换期间的保护"（trait:dollSwitching：不死/无敌/阻回/禁疗/孤立/强制缴械/眩晕免疫）
+ * 不会自动生效。这里补一份等价的保护窗口 —— 业主明确要求"塔纳托斯切换成俄耳甫斯的时候也该有无敌"。
+ */
+const grantFormSwitchGuard = (battle, unit) => {
+  battle.addBuff(unit, {
+    key: 'makoto:formSwitch', duration: DOLL_SWITCH, visible: true, refresh: 'replace',
+    flags: { invulnerable: true, noSp: true, noHeal: true, healFree: true, isolated: true, disarm: true },
+  });
+};
+
 /** 官方 teamId：S.E.E.S. 小队（天赋 2 的作用范围围绕队员）。本模式里除他以外没有其他队员，判空即可。 */
 const SEES_TEAM = 'sees';
 
@@ -269,6 +281,7 @@ function makoto(bb, raw, def) {
       unit.mem.makotoPhase = 3;
       unit.mem.makotoDoll = 'orpheus';
       unit.skill?.setTrigger?.('NEVER');         // 形态3 不自动开技能
+      grantFormSwitchGuard(battle, unit);        // 这次切换由 kit 做，补上等价于引擎切换窗口的保护（含无敌）
       battle.addBuff(unit, {
         key: 'makoto:blockUp', duration: (unit.profile.dollDuration ?? 20) + DOLL_SWITCH, refresh: 'replace',
         mods: { blockCnt: num(s3['attack@block_cnt'], 0) }, source: unit, tags: ['skill'],
@@ -312,6 +325,20 @@ function makoto(bb, raw, def) {
         if (form === 'doll') { applyDollRange(battle, unit); applyTalentMods(battle, unit); installDollAttack(battle, unit); }
         else { restoreBodyRange(battle, unit); removeTalentMods(battle, unit); }
       }, { owner: unit, priority: -10 });
+
+      // S3：塔纳托斯在场时**受到致命伤** → 改为召唤俄耳甫斯（PRTS S3 描述「开启技能或受到致命伤时改为召唤
+      // 俄耳甫斯」+ S3 备注「<塔纳托斯·改>…依旧可以触发特性并切换至<俄耳甫斯·改>」）。
+      // 引擎的傀儡师分支只认"本体 → 替身"，替身再受致命伤就直接算击倒（professions.js 的 `if (unit.trait.doll) return`），
+      // 所以这条由 kit 接管：默认优先级 0 高于引擎那条 -100，先跑并把 ctx.prevented 置上，引擎就不会再判死。
+      battle.on('fatal', (ctx) => {
+        if (ctx.unit !== unit || ctx.prevented) return;
+        if (!unit.trait?.doll || (unit.mem.makotoPhase ?? 0) !== 2) return;   // 只处理"替身·塔纳托斯"阶段
+        if (curId() !== S3) return;                                          // 只有 S3 有第二形态
+        ctx.prevented = true;
+        switchToDoll(battle, unit);        // phase 2 → 3（内部会设 trigger、加阻挡 buff、补切换保护、发 fx）
+        unit.hp = unit.s.maxHp;            // 与特性切进替身一致：「切换途中重设自身生命至最大值」
+        unit.markDirty?.();
+      }, { owner: unit });
     },
   };
 
