@@ -8,8 +8,8 @@
 //   1) 来源：**默认不再限制本机/内网**（按需求"不需要本机内网"，方便朋友在公网对局里也用）。
 //      想收回可用 DSH_DEV_LOCAL_ONLY=1 启动服务，即恢复"仅本机/内网"。
 //      调用者的 ip 会随每次操作记进状态，便于事后追查。
-//   2) 房间：默认只允许 **solo 单人房**（改经济状态不该污染多人对局）；
-//      共测要放开可用 DSH_DEV_ANY_ROOM=1。
+//   2) 房间：**硬性只允许 solo 单人房**（改经济状态不该污染多人对局）。这是设计要求，
+//      不提供放宽开关 —— 想用后门就跑单人房。
 //   3) 身份：只能作用于**调用者自己的座位**。
 //   4) 想彻底禁用后门：启动服务时带 DSH_DEV_DISABLED=1（此时连开关本身都不给用）。
 //
@@ -26,7 +26,7 @@
 //   setLayers bondId n 把某盟约直接设成 n 层（可增可减）
 //   pick slot charId [skillIndex]  把自选槽换成指定干员
 //   opPool            自选池清单
-//   ops               自选槽清单 + 房间信息
+//   ops               自选槽清单 + 房间信息（房间模式恒为 solo）
 //
 // 撤销：node tools/revert-dev-backdoor.mjs
 
@@ -37,8 +37,6 @@ import { OK, fail } from './player/common.js';
 const DEV_DISABLED = String(process.env.DSH_DEV_DISABLED || '') === '1';
 /** DSH_DEV_LOCAL_ONLY=1 ⇒ 恢复"仅本机/内网"限制（默认不限制）。 */
 const LOCAL_ONLY = String(process.env.DSH_DEV_LOCAL_ONLY || '') === '1';
-/** DSH_DEV_ANY_ROOM=1 ⇒ 放宽房间限制（默认只允许 solo）。 */
-const ANY_ROOM = String(process.env.DSH_DEV_ANY_ROOM || '') === '1';
 /** DSH_DEV_DEFAULT_ON=1 ⇒ 房间开关开局即为开（默认关闭，需在面板里点开）。 */
 const DEFAULT_ON = String(process.env.DSH_DEV_DEFAULT_ON || '') === '1';
 
@@ -71,7 +69,6 @@ export function handleDev(lobby, session, msg, ctx = {}) {
     enabled: devOn(room),
     room: room.mode ?? null,
     localOnly: LOCAL_ONLY,
-    anyRoom: ANY_ROOM,
     defaultOn: DEFAULT_ON,
     fromLocal: !!ctx.isLocal,
     ip: ctx.ip ?? null,
@@ -90,9 +87,9 @@ export function handleDev(lobby, session, msg, ctx = {}) {
   // 以下是会改状态的操作：来源/房间/开关/身份 四道检查
   if (LOCAL_ONLY && !ctx.isLocal) return fail(ERR.BAD_TARGET, 'dev: local/LAN only (DSH_DEV_LOCAL_ONLY=1)');
   if (!devOn(room)) return fail(ERR.BAD_TARGET, 'dev: 后门开关未开启（先在面板点「开启后门」）');
-  // ── 2) 房间：默认只允许 solo；DSH_DEV_ANY_ROOM=1 放宽 ────────────────────────
-  if (room.mode !== 'solo' && !ANY_ROOM) {
-    return fail(ERR.BAD_TARGET, 'dev: solo rooms only（共测请用 DSH_DEV_ANY_ROOM=1 启动服务）');
+  // ── 2) 房间：**硬性只允许 solo 单人房**（这是设计要求，不提供放宽开关）──────
+  if (room.mode !== 'solo') {
+    return fail(ERR.BAD_TARGET, 'dev: solo rooms only');
   }
   if (!match) return fail(ERR.BAD_TARGET, 'dev: the match has not started');
   // ── 3) 身份：只允许自己的座位 ────────────────────────────────────────────────
@@ -204,7 +201,6 @@ function listOps(match, room) {
   return {
     slots: Object.entries(slots).map(([id, s]) => ({ slot: id, tier: s.tier, shopLevel: s.shopLevel })),
     room: room?.mode ?? null,
-    anyRoom: ANY_ROOM,
   };
 }
 

@@ -226,6 +226,5 @@ test('ops：返回自选槽清单 + 房间信息与放宽开关状态', () => {
   const res = handleDev(withDev(fakeLobby()), SESSION, { op: 'ops' }, LOCAL);
   assert.equal(res.ok, true);
   assert.equal(res.ops.room, 'solo');
-  assert.equal(res.ops.anyRoom, false, '默认不放宽（需 DSH_DEV_ANY_ROOM=1）');
   assert.ok(res.ops.slots.some((s) => s.slot === 'chess_char_6_diy1_a' && s.tier === 6));
 });

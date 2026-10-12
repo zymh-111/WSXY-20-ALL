@@ -65,16 +65,49 @@ function el(tag, style, text) {
 
 function buildPanel() {
   const root = el('div', {
-    position: 'fixed', top: '10px', right: '10px', zIndex: '99999', width: '260px',
+    position: 'fixed', top: '10px', right: '10px', zIndex: '99999', width: '268px', maxHeight: '92vh', overflow: 'auto',
     background: 'rgba(12,16,22,0.94)', color: '#d8e2ee', font: '12px/1.5 ui-monospace,monospace',
     border: '1px solid #2c3a4c', borderRadius: '8px', padding: '10px', boxShadow: '0 6px 24px rgba(0,0,0,.5)',
   });
-  const head = el('div', { display: 'flex', justifyContent: 'space-between', marginBottom: '6px' });
+  const head = el('div', { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px', cursor: 'move' });
   head.append(el('b', { color: '#8fd0ff' }, '测试后门 (dev)'));
-  const close = el('span', { cursor: 'pointer', color: '#ff9a9a' }, '✕');
+  const tools = el('span', { display: 'flex', gap: '8px' });
+  const collapse = el('span', { cursor: 'pointer', color: '#ffd479', title: '折叠/展开' }, '－');
+  const close = el('span', { cursor: 'pointer', color: '#ff9a9a', title: '收起（可用 __dev.ensure() 再打开）' }, '✕');
   close.onclick = () => api.hide();
-  head.append(close);
+  tools.append(collapse, close);
+  head.append(tools);
   root.append(head);
+
+  // 面板主体（折叠时只留标题栏）
+  const body = el('div');
+  root.append(body);
+  collapse.onclick = () => {
+    const hidden = body.style.display === 'none';
+    body.style.display = hidden ? '' : 'none';
+    collapse.textContent = hidden ? '－' : '＋';
+  };
+
+  // 拖动：按住标题栏移动整个面板（位置记在 localStorage）
+  try {
+    const saved = JSON.parse(localStorage.getItem('dshDevPos') || 'null');
+    if (saved) { root.style.left = saved.x + 'px'; root.style.top = saved.y + 'px'; root.style.right = 'auto'; }
+  } catch { /* 忽略 */ }
+  let drag = null;
+  head.addEventListener('pointerdown', (e) => {
+    if (e.target === close || e.target === collapse) return;
+    const r = root.getBoundingClientRect();
+    drag = { dx: e.clientX - r.left, dy: e.clientY - r.top };
+    head.setPointerCapture?.(e.pointerId);
+  });
+  head.addEventListener('pointermove', (e) => {
+    if (!drag) return;
+    const x = Math.max(0, Math.min(window.innerWidth - 60, e.clientX - drag.dx));
+    const y = Math.max(0, Math.min(window.innerHeight - 30, e.clientY - drag.dy));
+    root.style.left = x + 'px'; root.style.top = y + 'px'; root.style.right = 'auto';
+    try { localStorage.setItem('dshDevPos', JSON.stringify({ x, y })); } catch { /* 忽略 */ }
+  });
+  head.addEventListener('pointerup', () => { drag = null; });
 
   // ── 后门开关（每个房间一个；默认关闭）──
   const swWrap = el('div', { display: 'flex', alignItems: 'center', gap: '6px', margin: '4px 0 6px' });
@@ -164,16 +197,16 @@ function buildPanel() {
   };
   refreshOps();
 
-  root.append(status);
-  root.append(row([btn('读状态', async () => { const r = await show(); await refreshBonds(); await refreshOps(); return r; }), btn('+500 资金', () => api.funds(500))]));
-  root.append(row([btn('+1 等级', () => api.level(1)), btn('+5 等级', () => api.level(5)), btn('免费刷新', () => api.refresh())]));
-  root.append(row([bondSel, layerNum, btn('设层数', () => api.setLayers(bondSel.value, Number(layerNum.value) || 0))]));
-  root.append(row([btn('全盟约 +3', () => api.layersAll(3))]));
-  root.append(el('div', { marginTop: '6px', color: '#8fd0ff' }, '自选干员 → 塞进槽位（选完点“塞入”）'));
-  root.append(row([slotSel, opSel]));
-  root.append(row([btn('塞入', () => api.pick(opSel.value, slotSel.value))]));
-  root.append(el('div', { marginTop: '6px', color: '#7b8ea3' }, '仅本机/内网；房间默认限 solo'));
-  root.append(log);
+  body.append(status);
+  body.append(row([btn('读状态', async () => { const r = await show(); await refreshBonds(); await refreshOps(); return r; }), btn('+500 资金', () => api.funds(500))]));
+  body.append(row([btn('+1 等级', () => api.level(1)), btn('+5 等级', () => api.level(5)), btn('免费刷新', () => api.refresh())]));
+  body.append(row([bondSel, layerNum, btn('设层数', () => api.setLayers(bondSel.value, Number(layerNum.value) || 0))]));
+  body.append(row([btn('全盟约 +3', () => api.layersAll(3))]));
+  body.append(el('div', { marginTop: '6px', color: '#8fd0ff' }, '自选干员 → 塞进槽位（选完点“塞入”）'));
+  body.append(row([slotSel, opSel]));
+  body.append(row([btn('塞入', () => api.pick(opSel.value, slotSel.value))]));
+  body.append(el('div', { marginTop: '6px', color: '#7b8ea3' }, '仅本机/内网；房间默认限 solo'));
+  body.append(log);
   return root;
 }
 
@@ -183,6 +216,26 @@ api.hide = () => { if (panel) { panel.remove(); panel = null; } };
 api.ensure = () => { if (!panel) api.show(); return api; };
 
 if (typeof window !== 'undefined') window.__dev = api;
+
+/**
+ * 自动出现：测试服上不想每次开控制台。等游戏界面挂载（#app 里有内容）后再弹出面板，
+ * 并且只在"看起来是游戏/房间页"时弹（避免在标题页挡着）。
+ * 想关掉自动弹出：localStorage.dshDevAuto = '0'（或控制台 __dev.hide()）。
+ */
+function autoShow() {
+  try { if (localStorage.getItem('dshDevAuto') === '0') return; } catch { /* 忽略 */ }
+  let tries = 0;
+  const tick = () => {
+    tries += 1;
+    const app = document.getElementById('app');
+    const busy = app && app.childElementCount > 0;
+    if (busy) { api.ensure(); return; }
+    if (tries < 120) setTimeout(tick, 500);   // 最多等 60 秒
+  };
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', () => setTimeout(tick, 1500));
+  else setTimeout(tick, 1500);
+}
+if (typeof document !== 'undefined') autoShow();
 
 export default api;
 export { dev };
