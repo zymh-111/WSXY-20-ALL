@@ -160,34 +160,29 @@ export function handleDev(lobby, session, msg, ctx = {}) {
       };
     }
     case 'give': {
-      // 直接获取：把该自选槽做成一个 0 价货位，再走游戏自己的 buy()。
-      // 这样手牌容量、库存递减、onBuy 事件、统计都按正常逻辑走，不需要我另写一份"入队"。
+      // 直接获取：走游戏自己的 acquireChess()。
+      // 关键点：acquireChess 内部会 stow(piece, { allowTemp: true }) ——
+      // 手牌满了会自动放进整备区(temp)，不像 buy() 那样直接 HAND_FULL 拒绝。
+      // 它也自带合并（凑齐 2 份变精锐）、库存扣减、onGain 事件、recompute。
       const slot = String(msg.slot ?? 'chess_char_6_diy1_a');
       const rec = ps.gd?.chess?.(slot);
       if (!rec) return fail(ERR.BAD_TARGET, `dev: ${slot} 不是本局可用的槽位`);
       if (rec.isDiy && !rec.diyFor) return fail(ERR.BAD_TARGET, 'dev: 该槽位没有你的自选记录（先点「塞入」）');
-      if (ps.funds < 1) ps.addFunds(1000, { reason: 'dev' });
-      // 库存：自选件按 diyStock 的 left 计；先给它至少留 1 份，否则 buy() 会报 SOLD_OUT
+      // 自选件的库存按 diyStock 的 left 计；先给它留 1 份，否则 take() 拿不到
       try {
         const base = ps.gd.baseIdOf(slot);
         const e = ps.diyStock?.entries?.get(base);
         if (e && !(e.left > 0)) e.left = 1;
       } catch { /* 忽略 */ }
-      const idx = ps.shop.slots.length;
-      ps.shop.slots.push({ kind: 'chess', id: slot, basePrice: 0, frozen: false, sold: false });
-      const gate = ps._gate;
-      if (typeof gate === 'function') ps._gate = () => null;   // 宽松：跳过阶段检查
-      let r;
-      try { r = ps.buy(idx); } finally { if (typeof gate === 'function') ps._gate = gate; }
-      if (r && r.error) {
-        ps.shop.slots.splice(idx, 1);
-        ps.dirty?.();
-        const hint = r.error === 'HAND_FULL' ? '：手牌满了，先上几个场或撤回' : '';
-        return fail(ERR.BAD_TARGET, `dev: 直接获取失败（${r.error}）${hint}`);
+      let piece = null;
+      try { piece = ps.acquireChess(slot, { source: 'dev', fromPool: true }); } catch { piece = null; }
+      if (!piece) {
+        return fail(ERR.BAD_TARGET, 'dev: 获取失败 —— 手牌与整备区都满了，先上场几个或撤回一个再试');
       }
       ps.dirty?.();
-      return { ok: true, reply: { t: 'dev', slot, given: ps.gd.baseIdOf(slot), ...snapshot(ps) } };
+      return { ok: true, reply: { t: 'dev', slot, uid: piece.uid ?? null, ...snapshot(ps) } };
     }
+
     case 'boost': {
       // 一键到位：钱补到 9999 → 等级拉满 → 刷新商店。
       // 之所以要刷新商店：自选干员是按 slot.shopLevel（六阶=6）才上架的，

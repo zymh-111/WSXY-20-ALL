@@ -26,7 +26,9 @@ async function dev(op, fields = {}) {
     return await net.request('dev', { op, ...fields });
   } catch (e) {
     const code = e && e.code ? e.code : 'ERROR';
-    const detail = e && e.message ? e.message : String(e);
+    // 服务端把具体原因放在 detail 里（例如「直接获取失败（HAND_FULL）：手牌满了」），
+    // 只显示 message 的话永远只能看到通用的「无效的目标」，排查会很痛苦。
+    const detail = [e && e.message, e && e.detail].filter(Boolean).join(' — ') || String(e);
     throw new Error(`dev ${op} 失败：${code}${detail ? ' — ' + detail : ''}` +
       (code === 'BAD_TARGET' ? '（后门只对「本机/内网 + solo 单人房」生效）' : ''));
   }

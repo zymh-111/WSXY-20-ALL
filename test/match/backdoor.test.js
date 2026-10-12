@@ -60,7 +60,13 @@ function fakePlayer({ funds = 10, shopLevel = 1, maxShopLevel = 6, upgradePrice 
     setDiy(picks) { calls.push(['setDiy', picks]); this.diy = { ...picks }; return true; },
     initDiyStock() { calls.push(['initDiyStock']); },
     rollShop(o) { calls.push(['rollShop', o]); },
-    buy(i) { calls.push(['buy', i]); this.hand.push({ id: this.shop.slots[i] && this.shop.slots[i].id }); return { ok: true }; },
+    acquireChess(id, o) {
+      calls.push(['acquireChess', id, o]);
+      const piece = { uid: 'u' + (this.hand.filter(Boolean).length + this.temp.filter(Boolean).length + 1), id };
+      // 与游戏一致：先手牌，满了进整备区(temp)
+      if (this.hand.filter(Boolean).length < 5) this.hand.push(piece); else this.temp.push(piece);
+      return piece;
+    },
   };
   return ps;
 }
@@ -293,19 +299,22 @@ test('形状契约：每个成功返回都必须带 reply，否则 server/net.js
   }
 });
 
-test('give：直接获取（插 0 价货位 + 走游戏自己的 buy）', () => {
-  // 用户要的"直接拿到干员"：不走商店随机、也不用刷等级，
-  // 而是把该自选槽做成 0 价货位再调 buy()，手牌/库存/事件都按游戏逻辑走。
+test('give：直接获取（走游戏自己的 acquireChess，手牌满了自动进整备区）', () => {
+  // 用户的场景：手牌已经有 5 个。早先走 buy() 会被 HAND_FULL 直接拒绝，
+  // 所以改成 acquireChess —— 它内部 stow(piece, { allowTemp: true })，满了自动进 temp。
   const ps = fakePlayer();
   const lobby = withDev(fakeLobby({ ps }));
   const res = dev(lobby, SESSION, { op: 'give', slot: 'chess_char_6_diy1_a' }, LOCAL);
   assert.equal(res.ok, true);
-  const buy = ps.calls.find((c) => c[0] === 'buy');
-  assert.ok(buy, '调了游戏自己的 buy()');
+  const call = ps.calls.find((c) => c[0] === 'acquireChess');
+  assert.ok(call, '调了游戏自己的 acquireChess()');
+  assert.equal(call[1], 'chess_char_6_diy1_a', '拿的就是那个自选槽');
   assert.equal(ps.hand.length, 1, '手牌多了一个');
-  const slot = ps.shop.slots[buy[1]];
-  assert.equal(slot.basePrice, 0, '0 价（等于免费）');
-  assert.equal(slot.id, 'chess_char_6_diy1_a', '货位就是那个自选槽');
+  // 再拿一次 → 两个
   dev(lobby, SESSION, { op: 'give', slot: 'chess_char_6_diy1_a' }, LOCAL);
   assert.equal(ps.hand.length, 2, '可以重复获取');
+  // 手牌塞满 5 个后，继续获取应该落到整备区（temp），不能失败
+  for (let i = 0; i < 5; i++) dev(lobby, SESSION, { op: 'give', slot: 'chess_char_6_diy1_a' }, LOCAL);
+  assert.equal(ps.hand.filter(Boolean).length, 5, '手牌满 5');
+  assert.ok(ps.temp.filter(Boolean).length >= 2, `溢出的进了整备区（${ps.temp.filter(Boolean).length} 个）`);
 });
