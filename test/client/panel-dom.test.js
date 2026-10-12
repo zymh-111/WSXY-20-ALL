@@ -15,10 +15,14 @@ function makeFakeDom() {
     const n = {
       tagName: String(tag).toUpperCase(), children: [], style: {}, dataset: {}, options: [],
       textContent: '', value: '', checked: false, type: '', className: '',
-      append(...kids) { for (const k of kids) if (k) this.children.push(k); },
-      appendChild(k) { this.children.push(k); return k; },
-      replaceChildren(...kids) { this.children = kids.filter(Boolean); },
-      remove() { this.removed = true; },
+      append(...kids) { for (const k of kids) if (k) { k.parent = this; this.children.push(k); } },
+      appendChild(k) { k.parent = this; this.children.push(k); return k; },
+      replaceChildren(...kids) { for (const k of this.children) k.parent = null; this.children = kids.filter(Boolean); for (const k of this.children) k.parent = this; },
+      remove() {
+        this.removed = true;
+        const p = this.parent;
+        if (p) { const i = p.children.indexOf(this); if (i >= 0) p.children.splice(i, 1); this.parent = null; }
+      },
       setAttribute(k, v) { this[k] = v; },
       addEventListener() {},
       setPointerCapture() {},
@@ -91,23 +95,28 @@ test('面板：__dev.ensure() 能构建出面板并挂进 body', async () => {
   } finally { g.restore(); }
 });
 
-test('面板：会自动弹出（readyState 已就绪时安排一次 tick）', async () => {
+test('面板：不再自动弹出（改由房间界面的「测试模式」开关触发）', async () => {
   const g = installFakeGlobals();
   try {
     await import('../../public/js/dev.js?case=2');
-    assert.ok(g.timers.length >= 1, '安排了一次延迟调用（自动弹出）');
-    // 跑掉那个延迟回调：它应当发现 #app 已有内容 → 直接 ensure()
-    g.timers.shift()();
-    assert.equal(g.body.children.length, 1, '自动弹出把面板挂上了');
+    // 模块加载后**不应**有排队的自动弹出回调
+    assert.equal(g.timers.length, 0, '没有自动弹出的延迟调用');
+    assert.equal(g.body.children.length, 0, 'body 仍是空的（不上来就弹窗）');
+    // 只有显式调用（房间开关 / 控制台）才出现
+    globalThis.window.__dev.ensure();
+    assert.equal(g.body.children.length, 1, '__dev.ensure() 仍可用（房间开关走的就是它）');
   } finally { g.restore(); }
 });
 
-test('面板：localStorage.dshDevAuto === "0" 时不自动弹出', async () => {
+test('面板：ensure() 是幂等的，hide() 后可以再 ensure()', async () => {
   const g = installFakeGlobals();
   try {
-    globalThis.localStorage.setItem('dshDevAuto', '0');
-    await import('../../public/js/dev.js?case=3');
-    for (const fn of g.timers.splice(0)) fn();
-    assert.equal(g.body.children.length, 0, '被关掉自动弹出后 body 仍为空');
+    const mod = await import('../../public/js/dev.js?case=3');
+    mod.default.ensure();
+    mod.default.ensure();
+    assert.equal(g.body.children.length, 1, '重复 ensure 不重复挂载');
+    mod.default.hide();
+    mod.default.ensure();
+    assert.equal(g.body.children.length, 1, 'hide() 之后还能再打开');
   } finally { g.restore(); }
 });

@@ -30,6 +30,45 @@ import { difficultyInfo } from './lobby.js';
 import { t, tc } from '../../../shared/i18n.js';
 
 /**
+ * [CUSTOM DEV_BACKDOOR] 单人房里的「测试模式」开关。
+ * 打开后弹出测试后门面板（__dev），进对局后依然有效 —— 开关状态存在服务端的房间上。
+ * 服务端有硬性限制：只有 solo 单人房能用；多人房里点了也会被拒（并把原因显示出来）。
+ * 不想改代码就关掉：这里只是 UI，真正的授权在 server/match/dev.js。
+ */
+function TestModeSwitch({ coop }) {
+  const [on, setOn] = useState(null);        // null = 状态还没读回来
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  useEffect(() => {
+    if (coop) return undefined;
+    let alive = true;
+    net.request('dev', { op: 'devStatus' })
+      .then((r) => { if (alive) setOn(!!r.enabled); })
+      .catch((e) => { if (alive) { setOn(false); setErr(String(e && e.message ? e.message : e)); } });
+    return () => { alive = false; };
+  }, [coop]);
+  if (coop) return null;                     // 只给单人房
+  const toggle = async () => {
+    setBusy(true); setErr('');
+    try {
+      const r = await net.request('dev', { op: 'devToggle', on: !on });
+      setOn(!!r.enabled);
+      if (r.enabled) globalThis.__dev && globalThis.__dev.ensure && globalThis.__dev.ensure();
+      else globalThis.__dev && globalThis.__dev.hide && globalThis.__dev.hide();
+    } catch (e) {
+      setErr(String(e && e.message ? e.message : e));
+    } finally { setBusy(false); }
+  };
+  return html`<div class="room-dev">
+    <button type="button" class=${'room-dev__sw' + (on ? ' is-on' : '')} disabled=${busy || on === null} onClick=${toggle}>
+      <span class="room-dev__dot"></span>
+      <span>${on ? '测试模式：已开启' : '测试模式：关闭'}</span>
+    </button>
+    ${err ? html`<span class="room-dev__err">${err}</span>` : null}
+  </div>`;
+}
+
+/**
  * Seats padded to the room's capacity (co-op 4–20, solo 1), each null or a seat record.
  * @param {any} room room.state payload
  * @returns {(null | {seat:number, playerId:any, name:string, isBot:boolean, ready:boolean, connected:boolean})[]}
@@ -374,6 +413,7 @@ export function RoomScreen() {
         <div class="room-bar__status">${statusLine}</div>
       </div>
       <div class="room-bar__right">
+        <div class="room-bar__main">
         <${LoadoutButton} from="room" size="lg" class="room-loadout" label=${t('干员调配')} />
         ${facts.isHost
           ? html`<${Tooltip} text=${facts.canStart ? null : t('仍有博士未准备就绪')}>
@@ -383,6 +423,8 @@ export function RoomScreen() {
             ? html`<${Button} variant="secondary" size="xl" icon="eye" disabled=${true}>${t('观战中')}<//>`
           : html`<${Button} variant=${myReady ? 'primary' : 'secondary'} size="xl" icon=${myReady ? 'check' : 'hourglass'} active=${myReady}
               loading=${busy === 'ready'} disabled=${!online || !facts.mine} onClick=${toggleReady}>${myReady ? t('已就绪') : t('准备就绪')}<//>`}
+        </div>
+        <${TestModeSwitch} coop=${coop} />
       </div>
     </footer>
   </div>`;

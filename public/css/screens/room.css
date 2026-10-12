@@ -300,6 +300,22 @@
 .room-bar__label { display: flex; flex-direction: column; font-size: .17rem; font-weight: 700; color: var(--text-md); line-height: 1.35; }
 .room-bar__center { display: flex; flex-direction: column; align-items: center; gap: .06rem; }
 .room-bar__right { justify-self: end; display: flex; align-items: center; gap: .16rem; }
+
+/* [CUSTOM DEV_BACKDOOR] 单人房的「测试模式」开关：放在「开始模拟」下方。
+   右侧栏改成两行：上面是原有按钮（.room-bar__main），下面是这个开关。 */
+.room-bar__right { flex-direction: column; align-items: flex-end; gap: .06rem; }
+.room-bar__main { display: flex; align-items: center; gap: .16rem; }
+.room-dev { display: flex; align-items: center; gap: .08rem; }
+.room-dev__sw {
+  display: inline-flex; align-items: center; gap: .06rem; cursor: pointer;
+  font: inherit; font-size: .14rem; padding: .04rem .1rem; color: var(--lo, #7b8ea3);
+  background: rgba(0, 0, 0, .35); border: 1px solid var(--line-2, #33475e); border-radius: .04rem;
+}
+.room-dev__sw:hover { border-color: var(--mint, #6fd3c7); color: var(--mint, #6fd3c7); }
+.room-dev__sw.is-on { color: #0b0f14; background: var(--mint, #6fd3c7); border-color: var(--mint, #6fd3c7); }
+.room-dev__sw:disabled { opacity: .55; cursor: default; }
+.room-dev__dot { width: .08rem; height: .08rem; border-radius: 50%; background: currentColor; }
+.room-dev__err { font-size: .12rem; color: #ff9a9a; max-width: 2.8rem; }
 .room-bar__status { font-size: .15rem; }
 .room-bar__status .icon { width: .18rem; height: .18rem; margin-right: .05rem; vertical-align: -.03rem; }
 

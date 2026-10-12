@@ -217,25 +217,8 @@ api.ensure = () => { if (!panel) api.show(); return api; };
 
 if (typeof window !== 'undefined') window.__dev = api;
 
-/**
- * 自动出现：测试服上不想每次开控制台。等游戏界面挂载（#app 里有内容）后再弹出面板，
- * 并且只在"看起来是游戏/房间页"时弹（避免在标题页挡着）。
- * 想关掉自动弹出：localStorage.dshDevAuto = '0'（或控制台 __dev.hide()）。
- */
-function autoShow() {
-  try { if (localStorage.getItem('dshDevAuto') === '0') return; } catch { /* 忽略 */ }
-  let tries = 0;
-  const tick = () => {
-    tries += 1;
-    const app = document.getElementById('app');
-    const busy = app && app.childElementCount > 0;
-    if (busy) { api.ensure(); return; }
-    if (tries < 120) setTimeout(tick, 500);   // 最多等 60 秒
-  };
-  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', () => setTimeout(tick, 1500));
-  else setTimeout(tick, 1500);
-}
-if (typeof document !== 'undefined') autoShow();
+// [CUSTOM] 不再自动弹出：改由房间界面（单人房「测试模式」开关）调用 __dev.ensure()。
+// 控制台仍然可以手动用 __dev.ensure() / __dev.show()。
 
 export default api;
 export { dev };
