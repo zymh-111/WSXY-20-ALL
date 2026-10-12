@@ -331,3 +331,36 @@ test('天赋 2 S.E.E.S.队长：<替身>结束后对周围敌人造成 450% 攻�
   assert.ok(Math.abs(all[0].amount - dollAtk * 4.5) < 3, `${all[0].amount} = 替身攻击力 ${dollAtk} × 450%`);
   checkInvariants(h.b);
 });
+
+test('切换替身动画期间无敌 0.25s：窗口内打不掉血，窗口后恢复（官方观测 0.2~0.3s）', () => {
+  const invuln = (u) => u.s?.flags?.invulnerable === true || (u.hasFlag?.('invulnerable') ?? false);
+  const h = put(2);                       // S2 塔纳托斯
+  const u = ready(h);
+  const foe = h.spawn('enemy_dummy', { pos: [10, 5] });
+  assert.ok(foe, '敌人已就位');
+  assert.equal(invuln(u), false, '本体（切换前）不是无敌');
+
+  assert.equal(u.skill.activate('test', { free: true }), true, '开技能 → 切替身');
+  h.step(1);
+  assert.equal(invuln(u), true, '切换动画期间无敌');
+  assert.ok(u.findBuff('trait:dollInvuln'), '挂的是引擎的 trait:dollInvuln（无敌被拆成单独一条）');
+
+  // 无敌期间挨打：一点血都不掉
+  const hp0 = u.hp;
+  h.b.dealDamage(foe, u, { amount: 5000, type: 'phys', canDodge: false });
+  assert.equal(u.hp, hp0, `无敌期间伤害被完全挡掉（${hp0} → ${u.hp}）`);
+
+  // 过了无敌窗口就恢复常态 —— 但切换窗口本身（1 s 动画）还没结束
+  h.run(0.4);
+  assert.equal(invuln(u), false, '无敌窗口（0.25s）结束后不再无敌');
+  assert.ok(u.findBuff('trait:dollSwitching'), '切换动画的窗口仍在（1 s）—— 不死/阻回/禁疗/缴械/眩晕免疫照旧');
+  const hp1 = u.hp;
+  h.b.dealDamage(foe, u, { amount: 300, type: 'phys', canDodge: false });
+  assert.ok(u.hp < hp1, `无敌结束后正常受伤（${hp1} → ${u.hp}）`);
+
+  // 整个切换窗口结束时，那条 buff 才消失
+  h.run(1.2);
+  assert.ok(!u.findBuff('trait:dollSwitching'), '动画结束后切换窗口关闭');
+  assert.equal(invuln(u), false, '之后仍不是无敌');
+  checkInvariants(h.b);
+});

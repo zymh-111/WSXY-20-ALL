@@ -36,6 +36,7 @@ import { COLS } from '../../../constants.js';
 const S1 = 'skchr_makoto_1', S2 = 'skchr_makoto_2', S3 = 'skchr_makoto_3';
 /** <替身>形态的切换动画时长（引擎 professions.js DOLL_SWITCH）。 */
 const DOLL_SWITCH = 1;
+
 /** 官方 teamId：S.E.E.S. 小队（天赋 2 的作用范围围绕队员）。本模式里除他以外没有其他队员，判空即可。 */
 const SEES_TEAM = 'sees';
 
