@@ -103,12 +103,27 @@ export function handleDev(lobby, session, msg, ctx = {}) {
   }
   if (op === 'ops') return { ok: true, reply: { t: 'dev', ops: listOps(match, room) } };
   if (op === 'opPool') {
-    const pool = diyOf(match.gd)?.ownedPool ?? [];
-    const ops = pool.map((id) => {
-      const o = diyOf(match.gd)?.operators?.[id] ?? {};
-      return { charId: id, name: o.name ?? id, profession: o.profession ?? null, bonds: o.bonds ?? [] };
+    // diy：自选池（char_*，只能经自选槽出场，含联动干员）
+    // roster：本作阵容（chess_*，可直接获得）
+    const dd = diyOf(match.gd);
+    const pool = dd?.ownedPool ?? [];
+    const diy = pool.map((id) => {
+      const o = dd?.operators?.[id] ?? {};
+      return { id, kind: 'diy', charId: id, name: o.name ?? id, profession: o.profession ?? null, bonds: o.bonds ?? [] };
     });
-    return { ok: true, reply: { t: 'dev', count: ops.length, ops } };
+    const chessRaw = match.gd?.raw?.chess ?? {};
+    const seen = new Set();
+    const roster = [];
+    for (const cid of Object.keys(chessRaw)) {
+      const c = chessRaw[cid];
+      if (!c || !c.charId || c.isDiy) continue;
+      if (/_b$/.test(cid) && seen.has(c.charId)) continue;   // 精锐变体只留一个
+      if (seen.has(c.charId)) continue;
+      seen.add(c.charId);
+      roster.push({ id: cid, kind: 'roster', charId: c.charId, name: c.name ?? c.charId, tier: c.tier ?? null, profession: c.profession ?? null });
+    }
+    roster.sort((a, b) => (a.tier ?? 0) - (b.tier ?? 0) || String(a.name).localeCompare(String(b.name)));
+    return { ok: true, reply: { t: 'dev', count: diy.length + roster.length, diyCount: diy.length, rosterCount: roster.length, diy, roster } };
   }
 
   // ── pick 允许在**对局开始前**用：写房间座位，开局时 setDiy(seat.diy) 会生效 ──────
@@ -210,28 +225,58 @@ export function handleDev(lobby, session, msg, ctx = {}) {
       } };
     }
     case 'give': {
-      // 直接获取：走游戏自己的 acquireChess()。
-      // 关键点：acquireChess 内部会 stow(piece, { allowTemp: true }) ——
-      // 手牌满了会自动放进整备区(temp)，不像 buy() 那样直接 HAND_FULL 拒绝。
-      // 它也自带合并（凑齐 2 份变精锐）、库存扣减、onGain 事件、recompute。
-      const slot = String(msg.slot ?? 'chess_char_6_diy1_a');
+      // 直接获取任意干员。两种目标：
+      //   chess_*  → 阵容棋子，直接 acquireChess
+      //   char_*   → 自选干员（含联动）：先确保该槽位的 pick 写好（含写回房间座位 +
+      //              强制重发私有视图，客户端才能合成出干员身体），再 acquireChess(槽位)
+      // acquireChess 内部会 stow(piece,{allowTemp:true})：手牌满了自动进整备区，不会被我拒掉。
+      const target = String(msg.charId ?? msg.chessId ?? '');
+      if (!target) return fail(ERR.BAD_MSG, 'dev: give needs charId (char_*) or chessId (chess_*)');
+      const chessRaw = match.gd?.raw?.chess ?? {};
+
+      // ① 阵容棋子：直接给
+      if (chessRaw[target]) {
+        const p = ps.acquireChess?.(target, { source: 'dev', fromPool: true });
+        if (!p) return fail(ERR.BAD_TARGET, `dev: 获取 ${target} 失败（池子已空或该棋子不可用）`);
+        ps.dirty?.();
+        try { match._sendPrivate?.(ps, true); } catch { /* 忽略 */ }
+        return { ok: true, reply: { t: 'dev', kind: 'roster', given: target, uid: p.uid ?? null, ...snapshot(ps) } };
+      }
+
+      // ② 自选干员：需要槽位 + pick
+      const dd = diyOf(match.gd);
+      const slots = Object.keys(dd?.slots ?? {});
+      const normSlots = slots.filter((x) => !/_b$/.test(x));
+      if (!normSlots.length) return fail(ERR.BAD_TARGET, 'dev: 本局没有可用的自选槽');
+      const picked = (id) => ps.diy?.[id]?.charId === target;
+      const slot = String(msg.slot && normSlots.includes(String(msg.slot)) ? msg.slot
+        : normSlots.find(picked) ?? normSlots[normSlots.length - 1]);
+      // 需要时先把 pick 写好（局中写 ps.diy；局外写房间座位）
+      if (!picked(slot)) {
+        const picks = { ...(ps.diy ?? session.diy ?? {}), [slot]: { charId: target, skillIndex: reqInt(msg, 'skillIndex') ?? 0, uniEquipId: msg.uniEquipId ? String(msg.uniEquipId) : null } };
+        if (!match) {
+          try { lobby.diy?.(session, { picks }); } catch { /* 忽略 */ }
+        } else {
+          if (!ps.setDiy?.(picks)) return fail(ERR.BAD_TARGET, `dev: 无法把 ${target} 放进 ${slot}（不在自选池，或该干员没有 kit）`);
+          try { ps.initDiyStock?.(new Set(match.bannedBondIds ?? [])); } catch { /* 忽略 */ }
+          try { ps.rollShop?.({ keepFrozen: false }); } catch { /* 忽略 */ }
+          try { lobby.diy?.(session, { picks }); } catch { /* 忽略 */ }
+        }
+      }
       const rec = ps.gd?.chess?.(slot);
-      if (!rec) return fail(ERR.BAD_TARGET, `dev: ${slot} 不是本局可用的槽位`);
-      if (rec.isDiy && !rec.diyFor) return fail(ERR.BAD_TARGET, 'dev: 该槽位没有你的自选记录（先点「塞入」）');
-      // 自选件的库存按 diyStock 的 left 计；先给它留 1 份，否则 take() 拿不到
+      if (!rec) return fail(ERR.BAD_TARGET, `dev: 槽位 ${slot} 不可用`);
+      if (rec.isDiy && !rec.diyFor) return fail(ERR.BAD_TARGET, `dev: 槽位 ${slot} 还没有合成为干员（可能是当前局开始后再改的，先把 pick 设好再开局）`);
+      // 自选件库存留一份
       try {
         const base = ps.gd.baseIdOf(slot);
         const e = ps.diyStock?.entries?.get(base);
         if (e && !(e.left > 0)) e.left = 1;
       } catch { /* 忽略 */ }
-      let piece = null;
-      try { piece = ps.acquireChess(slot, { source: 'dev', fromPool: true }); } catch { piece = null; }
-      if (!piece) {
-        return fail(ERR.BAD_TARGET, 'dev: 获取失败 —— 手牌与整备区都满了，先上场几个或撤回一个再试');
-      }
+      const piece = ps.acquireChess?.(slot, { source: 'dev', fromPool: true }) ?? null;
+      if (!piece) return fail(ERR.BAD_TARGET, 'dev: 获取失败 —— 手牌与整备区都满了，先上场几个或撤回一个再试');
       ps.dirty?.();
       try { match._sendPrivate?.(ps, true); } catch { /* 忽略 */ }
-      return { ok: true, reply: { t: 'dev', slot, uid: piece.uid ?? null, ...snapshot(ps) } };
+      return { ok: true, reply: { t: 'dev', kind: 'diy', given: slot, charId: target, uid: piece.uid ?? null, ...snapshot(ps) } };
     }
 
     case 'boost': {

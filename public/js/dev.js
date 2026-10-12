@@ -50,7 +50,7 @@ const api = {
   /** 槽位与房间信息（含放宽开关状态）。 */
   ops: () => dev('ops'),
   /** 直接给我：把该槽位的干员直接塞进手牌（走游戏自己的 buy）。 */
-  give: (slot = 'chess_char_6_diy1_a') => dev('give', { slot }),
+  give: (id, slot) => dev('give', { charId: id, slot }),
   /** 一键到位：补钱 + 等级拉满 + 刷新商店（自选干员才会真的上架）。 */
   boost: () => dev('boost'),
   /**
@@ -201,19 +201,23 @@ function buildPanel() {
   const slotSel = el('select', { width: '74px', background: '#1d2a3a', color: '#d8e2ee', border: '1px solid #33475e', borderRadius: '4px', padding: '2px' });
   const refreshOps = async () => {
     try {
-      const { ops } = await api.opPool();
-      if (!ops.length) {
+      const pool = await api.opPool();
+      const diy = pool.diy ?? [];
+      const roster = pool.roster ?? [];
+      const mkOpt = (o) => {
+        const opt = el('option', null, (o.kind === 'roster' ? '[阵容] ' : '[自选] ') + o.name + '  (' + o.id + ')');
+        opt.value = o.id;
+        return opt;
+      };
+      if (!diy.length && !roster.length) {
         const ph = el('option', null, '（没读到干员，点「⟳ 刷新」）');
         ph.value = '';
         opSel.replaceChildren(ph);
       }
-      opSel.replaceChildren(...(ops.length ? ops.map((o) => {
-        const opt = el('option', null, o.name + '  (' + o.charId + ')');
-        opt.value = o.charId;
-        return opt;
-      }) : []));
-      const mk = ops.find((o) => o.charId === 'char_4217_makoto');
-      if (mk) opSel.value = mk.charId;
+      // 自选干员排在前面（后门主要是给他们用的），阵容在后
+      opSel.replaceChildren(...diy.map(mkOpt), ...roster.map(mkOpt));
+      const mk = [...diy, ...roster].find((o) => o.charId === 'char_4217_makoto');
+      if (mk) opSel.value = mk.id;
       const { ops: info } = await api.ops();
       slotSel.replaceChildren(...(info.slots ?? []).filter((s) => s.tier >= 5).map((s) => {
         const opt = el('option', null, 'T' + s.tier);
@@ -238,7 +242,7 @@ function buildPanel() {
   body.append(el('div', { marginTop: '6px', color: '#8fd0ff' }, '自选干员 → 塞进槽位（选完点“塞入”）'));
   body.append(row([slotSel, opSel]));
   body.append(row([btn('塞入', () => api.pick(opSel.value, slotSel.value)),
-    btn('🎁 直接给我', () => api.give(slotSel.value))]));
+    btn('🎁 直接给我', () => api.give(opSel.value, slotSel.value))]));
   body.append(el('div', { marginTop: '6px', color: '#7b8ea3' }, '仅本机/内网；房间默认限 solo'));
   body.append(log);
   return root;

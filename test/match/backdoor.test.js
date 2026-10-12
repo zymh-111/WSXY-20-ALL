@@ -32,6 +32,8 @@ function fakePlayer({ funds = 10, shopLevel = 1, maxShopLevel = 6, upgradePrice 
       baseIdOf: (id) => id,
       raw: {
         // 生产路径：data/backups.json 挂在 raw.backups 下（dev.js 的 diyOf 优先读这里）
+        // 阵容棋子表（give 的 roster 分支读它）
+        chess: { chess_char_1_01_a: { charId: 'char_498_inside', name: '隐现', tier: 1, profession: 'SNIPER' } },
         backups: {
         diy: {
           ownedPool: ['char_4217_makoto', 'char_112_siege'],
@@ -266,13 +268,17 @@ test('pick：把自选槽换成指定干员（走 setDiy + 刷新库存）', () 
     'BAD_TARGET', '池外干员被拒');
 });
 
-test('opPool：返回自选池清单（面板下拉用）', () => {
+test('opPool：返回【自选】与【阵容】两组干员（面板下拉用）', () => {
   const res = dev(withDev(fakeLobby()), SESSION, { op: 'opPool' }, LOCAL);
   assert.equal(res.ok, true);
-  assert.equal(res.count, 2);
-  assert.equal(res.ops[0].charId, 'char_4217_makoto');
-  assert.equal(res.ops[0].name, '结城理');
-  assert.deepEqual(res.ops[0].bonds, ['lateranoShip', 'raidShip']);
+  assert.equal(res.diyCount, 2, '自选池 2 人');
+  assert.equal(res.rosterCount, 1, '阵容 1 人');
+  assert.equal(res.count, 3);
+  assert.equal(res.diy[0].charId, 'char_4217_makoto');
+  assert.equal(res.diy[0].name, '结城理');
+  assert.equal(res.diy[0].kind, 'diy');
+  assert.equal(res.roster[0].id, 'chess_char_1_01_a', '阵容给的是棋子 id');
+  assert.equal(res.roster[0].kind, 'roster');
 });
 
 test('ops：返回自选槽清单 + 房间信息与放宽开关状态', () => {
@@ -295,7 +301,7 @@ test('形状契约：每个成功返回都必须带 reply，否则 server/net.js
     { op: 'layers', bondId: 'egirShip', n: 1 }, { op: 'layersAll', n: 1 },
     { op: 'setLayers', bondId: 'egirShip', n: 2 }, { op: 'opPool' },
     { op: 'pick', slot: 'chess_char_6_diy1_a', charId: 'char_4217_makoto' },
-    { op: 'give', slot: 'chess_char_6_diy1_a' }, { op: 'boost' },
+    { op: 'give', charId: 'chess_char_1_01_a' }, { op: 'boost' },
   ];
   for (const msg of msgs) {
     const r = handleDev(lobby, SESSION, msg, LOCAL);
@@ -306,24 +312,34 @@ test('形状契约：每个成功返回都必须带 reply，否则 server/net.js
   }
 });
 
-test('give：直接获取（走游戏自己的 acquireChess，手牌满了自动进整备区）', () => {
-  // 用户的场景：手牌已经有 5 个。早先走 buy() 会被 HAND_FULL 直接拒绝，
-  // 所以改成 acquireChess —— 它内部 stow(piece, { allowTemp: true })，满了自动进 temp。
+test('give【阵容】：给一个 chess_* 就直接进手牌（不碰自选槽）', () => {
   const ps = fakePlayer();
   const lobby = withDev(fakeLobby({ ps }));
-  const res = dev(lobby, SESSION, { op: 'give', slot: 'chess_char_6_diy1_a' }, LOCAL);
+  const res = dev(lobby, SESSION, { op: 'give', charId: 'chess_char_1_01_a' }, LOCAL);
   assert.equal(res.ok, true);
+  assert.equal(res.kind, 'roster');
   const call = ps.calls.find((c) => c[0] === 'acquireChess');
-  assert.ok(call, '调了游戏自己的 acquireChess()');
-  assert.equal(call[1], 'chess_char_6_diy1_a', '拿的就是那个自选槽');
+  assert.equal(call[1], 'chess_char_1_01_a', '拿的就是那个阵容棋子');
   assert.equal(ps.hand.length, 1, '手牌多了一个');
-  // 再拿一次 → 两个
-  dev(lobby, SESSION, { op: 'give', slot: 'chess_char_6_diy1_a' }, LOCAL);
-  assert.equal(ps.hand.length, 2, '可以重复获取');
-  // 手牌塞满 5 个后，继续获取应该落到整备区（temp），不能失败
-  for (let i = 0; i < 5; i++) dev(lobby, SESSION, { op: 'give', slot: 'chess_char_6_diy1_a' }, LOCAL);
-  assert.equal(ps.hand.filter(Boolean).length, 5, '手牌满 5');
-  assert.ok(ps.temp.filter(Boolean).length >= 2, `溢出的进了整备区（${ps.temp.filter(Boolean).length} 个）`);
+});
+
+test('give【自选】：自动塞好槽位再发到手里（用户要的"直接给我"）', () => {
+  const ps = fakePlayer();
+  const lobby = withDev(fakeLobby({ ps }));
+  // 没塞过 → 它应当自己先 setDiy，再 acquireChess(槽位)
+  // 假对象里默认那个槽位装的是 char_4217_makoto；这里要一个**没塞过**的干员
+  // （char_112_siege 在 ownedPool 里），才能验证 give 自己会先塞好。
+  const res = dev(lobby, SESSION, { op: 'give', charId: 'char_112_siege', slot: 'chess_char_6_diy1_a' }, LOCAL);
+  assert.equal(res.ok, true);
+  assert.equal(res.kind, 'diy');
+  assert.ok(ps.calls.some((c) => c[0] === 'setDiy'), '自己先塞好了');
+  const call = ps.calls.find((c) => c[0] === 'acquireChess');
+  assert.equal(call[1], 'chess_char_6_diy1_a', '给的是槽位棋子');
+  assert.equal(ps.hand.length, 1, '手牌多了一个');
+  // 手牌塞满 5 个后继续给 → 落整备区，不失败
+  for (let i = 0; i < 6; i++) dev(lobby, SESSION, { op: 'give', charId: 'char_112_siege', slot: 'chess_char_6_diy1_a' }, LOCAL);
+  assert.ok(ps.hand.filter(Boolean).length <= 5, '手牌不超过容量');
+  assert.ok(ps.temp.filter(Boolean).length >= 1, `溢出的进了整备区（${ps.temp.filter(Boolean).length}）`);
 });
 
 test('pick 在【对局开始前】也能用：写房间座位（开局时 setDiy(seat.diy) 会生效）', () => {
