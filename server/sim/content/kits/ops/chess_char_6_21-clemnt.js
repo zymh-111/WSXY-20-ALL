@@ -228,7 +228,16 @@ function clemnt(bb, raw, def) {
           }
           const dist2 = (e) => { const dx = e.x - unit.x, dy = e.y - unit.y; return dx * dx + dy * dy; };
           choices.sort((a, b) => dist2(a) - dist2(b) || a.spawnSeq - b.spawnSeq);
-          for (const e of choices) if (bombard(battle, unit, e, m, skill)) { m.marks.delete(e); break; }
+          for (const e of choices) if (bombard(battle, unit, e, m, skill)) {
+            // PRTS：「成功发射舰船轰炸弹道时，消耗1发弹药并去除轰炸目标地块上**所有敌人**的【可轰炸标记】」
+            // —— 原先只删了目标自己，同格其它敌人还留着标记（下一帧会再炸同格，被弹道冷却挡下，属无害但语义不符）。
+            const [tr, tc] = tile(e);
+            for (const [other] of m.marks) {
+              const [or_, oc] = tile(other);
+              if (or_ === tr && oc === tc) m.marks.delete(other);
+            }
+            break;
+          }
           if (skill.ammoLeft <= 0) skill.end('ammo');
         },
         onEnd({ unit }) { unit.mem.clemntBombs = null; },
@@ -313,7 +322,7 @@ function clemnt(bb, raw, def) {
             : source === unit ? '她自己造成的爆发（官方语义排除）'
             : null;
           console.log(`[clemnt] 侵蚀爆发 | 目标=${target?.defId ?? '?'} 来源=${source?.defId ?? '无'} `
-            + `弹药=${unit.skill?.ammoLeft ?? '-'} 技能=${unit.skill?.id ?? '-'} → ${why ? '不锁定（' + why + '）' : '锁定，1 秒后齐射'}`);
+            + `弹药=${unit.skill?.ammoLeft ?? '-'} 技能=${unit.skill?.id ?? '-'} → ${why ? '不锁定（' + why + '）' : '获得【可轰炸标记】(1 秒窗口，每帧尝试发射)'}`);
           if (why) return;
         }
         if (element !== 'erosion' || !up(unit) || !unit.skill?.active || unit.skill.id !== S3

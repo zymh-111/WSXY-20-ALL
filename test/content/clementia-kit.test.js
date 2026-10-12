@@ -454,3 +454,51 @@ test('跨干员：珊比的传送带打出侵蚀爆发时，克莱门莎照样�
   assert.ok(bombs.every((c) => c.target === foe), '落点就是爆发那个敌人');
   checkInvariants(h.b);
 });
+
+test('S3 轰炸规则：同一地块在弹道未结束（5 s）内不会被再次选择；换地块/超时后可再炸', () => {
+  // PRTS S3 备注：「克莱门莎每帧会尝试向…一名持有【可轰炸标记】的敌人所在地块发射舰船轰炸弹道；
+  // 无法选择目前存在未结束的舰船轰炸弹道（中心判定）作为轰炸目标」+「舰船轰炸弹道持续5秒」。
+  const h = mk({ seed: 17, units: [{ chessId: CHESS_E, row: 10, col: 3, skillIndex: 2 }] });
+  const u = ready(h);
+  const src = h.spawn('enemy_dummy', { pos: [9, 3] });          // 只是"造成爆发的一方"
+  const a = h.spawn('enemy_dummy', { pos: [10, 5] });
+  const b = h.spawn('enemy_dummy', { pos: [10, 6] });
+  assert.ok(src && a && b, '三个假人到位');
+  assert.equal(u.skill.activate('test', { free: true }), true, 'S3 开启');
+
+  const burst = (t2) => h.b.emit('elementBurst', { source: src, target: t2, element: 'erosion' });
+  const ammo = () => u.skill.ammoLeft;
+
+  burst(a);
+  h.step(1);
+  assert.equal(ammo(), 9, '第一次爆发 → 立即发射（每帧尝试，不是等 1 秒）');
+  assert.equal(u.mem.clemntBombs.tiles.size, 1, '该地块被弹道占用');
+
+  burst(a);
+  h.step(1);
+  assert.equal(ammo(), 9, '弹道未结束：同一地块的再次爆发**不会**发射');
+
+  burst(b);
+  h.step(1);
+  assert.equal(ammo(), 8, '换了地块 → 可以再发射');
+
+  h.run(1.2);                                                   // 标记窗口只有 1 秒
+  burst(a);
+  h.step(1);
+  assert.equal(ammo(), 8, '弹道还在（5 s 内）→ 仍然不发射');
+
+  h.run(5);                                                     // 等第一发弹道结束
+  burst(a);
+  h.step(1);
+  assert.equal(ammo(), 7, '弹道结束后同一地块可以再炸');
+
+  // 成功发射会清掉**该地块上所有敌人**的标记（PRTS）—— 先让这一格的弹道结束
+  h.run(5);
+  const c2 = h.spawn('enemy_dummy', { pos: [10, 5] });          // 与 a 同格
+  const ammoBefore = ammo();
+  burst(a); burst(c2);
+  h.step(1);
+  assert.equal(u.mem.clemntBombs.marks.size, 0, '同格所有敌人的标记都被清除');
+  assert.equal(ammo(), ammoBefore - 1, '两个标记只消耗 1 发弹药');
+  checkInvariants(h.b);
+});
