@@ -407,3 +407,48 @@ test('S3：塔纳托斯 → 俄耳甫斯 的这次切换【也有无敌】（引
   assert.equal(invuln(u), false, '窗口结束后恢复');
   checkInvariants(h.b);
 });
+
+test('引擎路径进替身也会记录形态（S3）→ 替身再受致命伤仍能换上俄耳甫斯', () => {
+  // 这条覆盖用户实测的那条路：不是靠开技能、而是靠"血条空了"进替身。
+  // 之前 kit 在这条路上不记 makotoPhase，于是替身再受致命伤时 phase≠2、接管条件不过 → 直接死。
+  const h = put(2);                       // S3
+  const u = ready(h);
+  assert.ok(!u.trait.doll, '先是本体');
+  assert.equal(u.mem.makotoPhase ?? 0, 0, '还没记录形态');
+  h.b.emit('fatal', { unit: u, prevented: false });     // 本体受到致命伤 → 引擎切替身
+  h.step(1);
+  assert.ok(u.trait.doll, '进了替身');
+  assert.equal(u.mem.makotoPhase, 2, '引擎路径也记录了形态2');
+  assert.equal(u.mem.makotoDoll, 'thanatos', '名字是塔纳托斯');
+  // 替身（塔纳托斯）再受致命伤 → 应当换上俄耳甫斯，而不是死
+  u.hp = 1;
+  h.b.emit('fatal', { unit: u, prevented: false });
+  h.step(1);
+  assert.equal(u.alive, true, '没有阵亡');
+  assert.equal(u.mem.makotoPhase, 3, '换成了俄耳甫斯');
+  assert.equal(u.mem.makotoDoll, 'orpheus');
+  checkInvariants(h.b);
+});
+
+test('S2（没有第二形态）：塔纳托斯受致命伤不会被换成俄耳甫斯', () => {
+  const h = put(1);                       // S2
+  const u = ready(h);
+  const foe = h.spawn('enemy_dummy', { pos: [10, 5] });
+  assert.equal(u.skill.activate('test', { free: true }), true, '开技能 → 塔纳托斯');
+  h.step(1);
+  assert.equal(u.mem.makotoPhase, 2, '形态2');
+  // 切换动画期间引擎有"不死"（dollSwitching）——先跑过这 1 秒窗口，否则 prevented 必为 true
+  h.run(1.2);
+  assert.ok(!u.findBuff('trait:dollSwitching'), '切换窗口已结束');
+  // 只 emit 钩子不会打死人（阵亡来自伤害结算）：这一句用来确认 kit 的接管条件不成立
+  const ctx = { unit: u, prevented: false };
+  h.b.emit('fatal', ctx);
+  assert.equal(ctx.prevented, false, 'S2 不接管（没有第二形态）');
+  assert.equal(u.mem.makotoPhase, 2, 'S2 不换形态');
+  // 真实致命伤害 → 替身被击倒就是阵亡
+  u.hp = 1;
+  h.b.dealDamage(foe, u, { amount: 99999, type: 'phys', canDodge: false });
+  h.step(1);
+  assert.equal(u.alive, false, 'S2 的替身被击倒就是阵亡（官方：只有 S3 有第二形态）');
+  checkInvariants(h.b);
+});

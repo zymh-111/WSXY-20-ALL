@@ -42,12 +42,6 @@ const DOLL_SWITCH = 1;
  * 因此引擎那套"切换期间的保护"（trait:dollSwitching：不死/无敌/阻回/禁疗/孤立/强制缴械/眩晕免疫）
  * 不会自动生效。这里补一份等价的保护窗口 —— 业主明确要求"塔纳托斯切换成俄耳甫斯的时候也该有无敌"。
  */
-/** [TEMP-LOG] 形态切换的可观测日志（排查用，撤掉时搜 TEMP-LOG）。 */
-const logSwitch = (battle, unit, from, to, extra = '') => {
-  const inv = unit.s?.flags?.invulnerable ? 'invuln' : '-';
-  console.log(`[makoto] 形态 ${from} → ${to} | t=${battle.time.toFixed(2)} `
-    + `hp=${Math.round(unit.hp)}/${Math.round(unit.s?.maxHp ?? 0)} ${inv}${extra ? ' | ' + extra : ''}`);
-};
 
 const grantFormSwitchGuard = (battle, unit) => {
   battle.addBuff(unit, {
@@ -99,6 +93,19 @@ function makoto(bb, raw, def) {
   /** 当前所选出技能的黑板（形态与 rank 一定正确）。def.skill 的键名有 id / skillId 两种，都认。 */
   const curId = () => def?.skill?.id ?? def?.skill?.skillId ?? raw?.skill?.skillId ?? null;
   const bbCur = (id) => (curId() === id ? bb : bbOf(id));
+
+/** 当前技能的可读名（日志用；必须放在闭包内 —— 它依赖 curId）。 */
+  const skillName = () => {
+    const id = curId();
+    return id === S1 ? 'S1' : id === S2 ? 'S2' : id === S3 ? 'S3' : String(id);
+  };
+
+  /** [TEMP-LOG] 形态切换的可观测日志（排查用，撤掉时搜 TEMP-LOG）。同样必须在闭包内。 */
+  const logSwitch = (battle, unit, from, to, extra = '') => {
+    const inv = unit.s?.flags?.invulnerable ? 'invuln' : '-';
+    console.log(`[makoto] 形态 ${from} → ${to} | 技能=${skillName()} t=${battle.time.toFixed(2)} `
+      + `hp=${Math.round(unit.hp)}/${Math.round(unit.s?.maxHp ?? 0)} ${inv}${extra ? ' | ' + extra : ''}`);
+  };
   const s1 = bbCur(S1), s2 = bbCur(S2), s3 = bbCur(S3);
   const inDoll = (u) => !!u.trait?.doll;
   /** 该形态的攻击范围钥匙（替身是 13 格菱形，本体是近战 2 格 —— 见 DOLL_RANGE_GRID）。 */
@@ -333,8 +340,24 @@ function makoto(bb, raw, def) {
       // 受致命伤由引擎的傀儡师分支自己触发 dollSwap，所以这条覆盖"开技能"和"血条空了"两条路径。
       battle.on('dollSwap', ({ unit: u, form }) => {
         if (u !== unit) return;
-        if (form === 'doll') { applyDollRange(battle, unit); applyTalentMods(battle, unit); installDollAttack(battle, unit); }
-        else { restoreBodyRange(battle, unit); removeTalentMods(battle, unit); }
+        if (form === 'doll') {
+          // [FIX] 引擎路径（本体 + 致命伤）进替身时，kit 之前**没有**记录形态 ——
+          // makotoPhase 仍为 0，于是"替身再受致命伤 → 换俄耳甫斯"的接管条件（phase === 2）永远不过。
+          // 这里补记：只有 kit 自己还没记过（开技能路径由 switchToDoll 记）时才写。
+          if (!(unit.mem.makotoPhase > 0)) {
+            const cur0 = curId();
+            unit.mem.makotoPhase = cur0 === S1 ? 3 : 2;
+            unit.mem.makotoDoll = cur0 === S1 ? 'orpheus' : 'thanatos';
+            console.log(`[makoto] （引擎路径进替身）补记形态 phase=${unit.mem.makotoPhase} `
+              + `doll=${unit.mem.makotoDoll} 技能=${skillName()}`);
+          }
+          applyDollRange(battle, unit); applyTalentMods(battle, unit); installDollAttack(battle, unit);
+        } else {
+          // 回到本体：清掉形态记录，下一次进替身重新判定
+          unit.mem.makotoPhase = 0;
+          unit.mem.makotoDoll = null;
+          restoreBodyRange(battle, unit); removeTalentMods(battle, unit);
+        }
       }, { owner: unit, priority: -10 });
 
       // S3：塔纳托斯在场时**受到致命伤** → 改为召唤俄耳甫斯（PRTS S3 描述「开启技能或受到致命伤时改为召唤
@@ -342,7 +365,11 @@ function makoto(bb, raw, def) {
       // 引擎的傀儡师分支只认"本体 → 替身"，替身再受致命伤就直接算击倒（professions.js 的 `if (unit.trait.doll) return`），
       // 所以这条由 kit 接管：默认优先级 0 高于引擎那条 -100，先跑并把 ctx.prevented 置上，引擎就不会再判死。
       battle.on('fatal', (ctx) => {
-        if (ctx.unit !== unit || ctx.prevented) return;
+        if (ctx.unit !== unit) return;
+        // [TEMP-LOG2] 无论接管与否都先记一行：doll/phase/技能/prevented 一看就知道条件卡在哪
+        console.log(`[makoto] fatal 钩子 | 技能=${skillName()} doll=${!!unit.trait?.doll} `
+          + `phase=${unit.mem.makotoPhase ?? 0} prevented=${ctx.prevented} t=${battle.time.toFixed(2)}`);
+        if (ctx.prevented) return;
         if (!unit.trait?.doll || (unit.mem.makotoPhase ?? 0) !== 2) return;   // 只处理"替身·塔纳托斯"阶段
         if (curId() !== S3) return;                                          // 只有 S3 有第二形态
         console.log(`[makoto] 致命伤接管（引擎本会击倒替身）| t=${battle.time.toFixed(2)} hp=${Math.round(unit.hp)}`
