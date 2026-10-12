@@ -66,33 +66,44 @@ function fakeLobby({ mode = 'solo', started = true, ps = fakePlayer(), playerId 
 /** 打开房间开关（等价于在面板里点「开启后门」）。 */
 const withDev = (lobby) => { lobby._room.devEnabled = true; return lobby; };
 
+/**
+ * 调用后门并展开 `reply` —— 服务端的成功返回是 `{ ok: true, reply: {...} }`，
+ * 因为 server/net.js 只把 `res.reply` 发给客户端（`{ ...res.reply, rid }`）。
+ * 返回里若少了 reply，数据会被整个丢掉：客户端 resolve 到的是 `{ t: 'ok', rid }`，
+ * 于是 r.enabled/r.funds/r.ops 全是 undefined —— 这正是"点了开关没反应"的原因。
+ */
+const dev = (lobby, session, msg, ctx) => {
+  const r = handleDev(lobby, session, msg, ctx);
+  return r && r.ok && r.reply ? { ...r.reply, ok: true } : r;
+};
+
 // ── 门禁 ─────────────────────────────────────────────────────────────────────
 
 test('开关：默认关闭；关闭时改状态的操作全被拒；devToggle 可开可关', () => {
   const lobby = fakeLobby();
-  assert.equal(handleDev(lobby, SESSION, { op: 'devStatus' }, LOCAL).enabled, false, '默认关闭');
-  assert.equal(handleDev(lobby, SESSION, { op: 'funds', n: 1 }, LOCAL).error, 'BAD_TARGET', '关闭时 funds 被拒');
-  assert.match(handleDev(lobby, SESSION, { op: 'funds', n: 1 }, LOCAL).detail ?? '', /开关未开启/);
+  assert.equal(dev(lobby, SESSION, { op: 'devStatus' }, LOCAL).enabled, false, '默认关闭');
+  assert.equal(dev(lobby, SESSION, { op: 'funds', n: 1 }, LOCAL).error, 'BAD_TARGET', '关闭时 funds 被拒');
+  assert.match(dev(lobby, SESSION, { op: 'funds', n: 1 }, LOCAL).detail ?? '', /开关未开启/);
 
-  const on = handleDev(lobby, SESSION, { op: 'devToggle', on: true }, LOCAL);
+  const on = dev(lobby, SESSION, { op: 'devToggle', on: true }, LOCAL);
   assert.equal(on.enabled, true, '开关打开');
-  assert.equal(handleDev(lobby, SESSION, { op: 'funds', n: 1 }, LOCAL).ok, true, '开启后可用');
+  assert.equal(dev(lobby, SESSION, { op: 'funds', n: 1 }, LOCAL).ok, true, '开启后可用');
 
-  const back = handleDev(lobby, SESSION, { op: 'devToggle', on: false }, LOCAL);
+  const back = dev(lobby, SESSION, { op: 'devToggle', on: false }, LOCAL);
   assert.equal(back.enabled, false, '再关回去');
-  assert.equal(handleDev(lobby, SESSION, { op: 'funds', n: 1 }, LOCAL).error, 'BAD_TARGET', '关闭后又被拒');
-  assert.equal(handleDev(lobby, SESSION, { op: 'devToggle' }, LOCAL).enabled, true, '不传 on 则取反');
-  assert.equal(handleDev(lobby, SESSION, { op: 'devStatus' }, LOCAL).ok, true, 'devStatus 永远可用');
+  assert.equal(dev(lobby, SESSION, { op: 'funds', n: 1 }, LOCAL).error, 'BAD_TARGET', '关闭后又被拒');
+  assert.equal(dev(lobby, SESSION, { op: 'devToggle' }, LOCAL).enabled, true, '不传 on 则取反');
+  assert.equal(dev(lobby, SESSION, { op: 'devStatus' }, LOCAL).ok, true, 'devStatus 永远可用');
 });
 
 test('来源：默认不再限制本机/内网（未开开关时仍拒）', () => {
   const lobby = fakeLobby();
   const remote = { isLocal: false, ip: '1.2.3.4' };
-  assert.match(handleDev(lobby, SESSION, { op: 'funds', n: 1 }, remote).detail ?? '', /开关未开启/);
+  assert.match(dev(lobby, SESSION, { op: 'funds', n: 1 }, remote).detail ?? '', /开关未开启/);
   withDev(lobby);
-  assert.equal(handleDev(lobby, SESSION, { op: 'funds', n: 5 }, remote).ok, true, '公网来源在开关开启后可用');
+  assert.equal(dev(lobby, SESSION, { op: 'funds', n: 5 }, remote).ok, true, '公网来源在开关开启后可用');
   assert.equal(lobby._ps.funds, 15);
-  const st = handleDev(lobby, SESSION, { op: 'devStatus' }, remote);
+  const st = dev(lobby, SESSION, { op: 'devStatus' }, remote);
   assert.equal(st.fromLocal, false);
   assert.equal(st.ip, '1.2.3.4');
   assert.equal(st.localOnly, false, '默认不限制本机');
@@ -100,22 +111,22 @@ test('来源：默认不再限制本机/内网（未开开关时仍拒）', () =
 
 test('房间：默认只允许 solo（coop 即使开了开关也被拒）', () => {
   const lobby = withDev(fakeLobby({ mode: 'coop' }));
-  const res = handleDev(lobby, SESSION, { op: 'funds', n: 1 }, LOCAL);
+  const res = dev(lobby, SESSION, { op: 'funds', n: 1 }, LOCAL);
   assert.equal(res.error, 'BAD_TARGET');
   assert.match(res.detail ?? '', /solo rooms only/);
 });
 
 test('身份：不在房间 / 对局未开始 / 没有自己的座位 都拒绝', () => {
-  assert.equal(handleDev({ roomOf: () => null }, SESSION, { op: 'devStatus' }, LOCAL).error, 'BAD_TARGET');
-  assert.equal(handleDev(withDev(fakeLobby({ started: false })), SESSION, { op: 'funds', n: 1 }, LOCAL).error, 'BAD_TARGET');
-  assert.equal(handleDev(withDev(fakeLobby({ ps: null })), SESSION, { op: 'funds', n: 1 }, LOCAL).error, 'BAD_TARGET');
-  assert.equal(handleDev(withDev(fakeLobby()), { playerId: 'someone-else' }, { op: 'funds', n: 1 }, LOCAL).error, 'BAD_TARGET');
+  assert.equal(dev({ roomOf: () => null }, SESSION, { op: 'devStatus' }, LOCAL).error, 'BAD_TARGET');
+  assert.equal(dev(withDev(fakeLobby({ started: false })), SESSION, { op: 'funds', n: 1 }, LOCAL).error, 'BAD_TARGET');
+  assert.equal(dev(withDev(fakeLobby({ ps: null })), SESSION, { op: 'funds', n: 1 }, LOCAL).error, 'BAD_TARGET');
+  assert.equal(dev(withDev(fakeLobby()), { playerId: 'someone-else' }, { op: 'funds', n: 1 }, LOCAL).error, 'BAD_TARGET');
 });
 
 test('参数：非法参数（缺整数 / 未知 op）拒绝，且无副作用', () => {
   const lobby = withDev(fakeLobby());
   for (const msg of [{ op: 'funds' }, { op: 'funds', n: 'x' }, { op: 'nope' }, {}]) {
-    assert.ok(handleDev(lobby, SESSION, msg, LOCAL).error, `拒绝 ${JSON.stringify(msg)}`);
+    assert.ok(dev(lobby, SESSION, msg, LOCAL).error, `拒绝 ${JSON.stringify(msg)}`);
   }
   assert.equal(lobby._ps.funds, 10, '没有副作用');
   assert.equal(lobby._ps.calls.length, 0, '没有任何方法被调用');
@@ -126,7 +137,7 @@ test('参数：非法参数（缺整数 / 未知 op）拒绝，且无副作用',
 test('state：返回资金 / 商店 / 盟约层数 / 已知盟约 / 自选已选干员', () => {
   const ps = fakePlayer({ funds: 42, shopLevel: 3 });
   ps.layers.egirShip = 7;
-  const res = handleDev(withDev(fakeLobby({ ps })), SESSION, { op: 'state' }, LOCAL);
+  const res = dev(withDev(fakeLobby({ ps })), SESSION, { op: 'state' }, LOCAL);
   assert.equal(res.ok, true);
   assert.equal(res.funds, 42);
   assert.equal(res.shopLevel, 3);
@@ -138,7 +149,7 @@ test('state：返回资金 / 商店 / 盟约层数 / 已知盟约 / 自选已选
 
 test('funds：加资金（走游戏自己的 addFunds）', () => {
   const ps = fakePlayer({ funds: 10 });
-  const res = handleDev(withDev(fakeLobby({ ps })), SESSION, { op: 'funds', n: 500 }, LOCAL);
+  const res = dev(withDev(fakeLobby({ ps })), SESSION, { op: 'funds', n: 500 }, LOCAL);
   assert.equal(res.ok, true);
   assert.equal(res.added, 500);
   assert.equal(res.funds, 510);
@@ -147,7 +158,7 @@ test('funds：加资金（走游戏自己的 addFunds）', () => {
 
 test('level：升级商店走游戏自己的价格与上限（照常发每级奖励）', () => {
   const ps = fakePlayer({ funds: 100, shopLevel: 1, maxShopLevel: 4, upgradePrice: 4 });
-  const res = handleDev(withDev(fakeLobby({ ps })), SESSION, { op: 'level', n: 5 }, LOCAL);
+  const res = dev(withDev(fakeLobby({ ps })), SESSION, { op: 'level', n: 5 }, LOCAL);
   assert.equal(res.ok, true);
   assert.equal(res.from, 1);
   assert.equal(res.level, 4, '到上限就停');
@@ -158,7 +169,7 @@ test('level：升级商店走游戏自己的价格与上限（照常发每级奖
 
 test('level：钱不够时停下并报 NO_FUNDS（不静默加等级）', () => {
   const ps = fakePlayer({ funds: 5, shopLevel: 1, maxShopLevel: 6, upgradePrice: 4 });
-  const res = handleDev(withDev(fakeLobby({ ps })), SESSION, { op: 'level', n: 3 }, LOCAL);
+  const res = dev(withDev(fakeLobby({ ps })), SESSION, { op: 'level', n: 3 }, LOCAL);
   assert.equal(res.level, 2, '只升得起一级');
   assert.equal(res.stopped, 'NO_FUNDS');
   assert.equal(ps.funds, 1);
@@ -167,10 +178,10 @@ test('level：钱不够时停下并报 NO_FUNDS（不静默加等级）', () => 
 test('layers / layersAll：加盟约层数（未激活也能加）', () => {
   const ps = fakePlayer({ bondIds: ['egirShip', 'siracusaShip'] });
   const lobby = withDev(fakeLobby({ ps }));
-  const one = handleDev(lobby, SESSION, { op: 'layers', bondId: 'egirShip', n: 9 }, LOCAL);
+  const one = dev(lobby, SESSION, { op: 'layers', bondId: 'egirShip', n: 9 }, LOCAL);
   assert.equal(one.layers, 9);
   assert.deepEqual(ps.calls.at(-1), ['addLayers', 'egirShip', 9, { requireActive: false, reason: 'dev' }]);
-  const all = handleDev(lobby, SESSION, { op: 'layersAll', n: 3 }, LOCAL);
+  const all = dev(lobby, SESSION, { op: 'layersAll', n: 3 }, LOCAL);
   assert.equal(all.count, 2);
   assert.equal(ps.layers.egirShip, 12);
   assert.equal(ps.layers.siracusaShip, 3);
@@ -179,22 +190,22 @@ test('layers / layersAll：加盟约层数（未激活也能加）', () => {
 test('setLayers：直接设成指定层数（可增可减；设相同值不变）', () => {
   const ps = fakePlayer({ bondIds: ['egirShip'] });
   const lobby = withDev(fakeLobby({ ps }));
-  let res = handleDev(lobby, SESSION, { op: 'setLayers', bondId: 'egirShip', n: 12 }, LOCAL);
+  let res = dev(lobby, SESSION, { op: 'setLayers', bondId: 'egirShip', n: 12 }, LOCAL);
   assert.equal(res.from, 0);
   assert.equal(res.to, 12);
-  res = handleDev(lobby, SESSION, { op: 'setLayers', bondId: 'egirShip', n: 3 }, LOCAL);
+  res = dev(lobby, SESSION, { op: 'setLayers', bondId: 'egirShip', n: 3 }, LOCAL);
   assert.equal(res.to, 3, '减到 3 层');
   assert.ok(ps.calls.some((c) => c[0] === 'recompute'), '减层后调了 recompute');
-  res = handleDev(lobby, SESSION, { op: 'setLayers', bondId: 'egirShip', n: 3 }, LOCAL);
+  res = dev(lobby, SESSION, { op: 'setLayers', bondId: 'egirShip', n: 3 }, LOCAL);
   assert.equal(res.to, 3);
   assert.equal(res.capped, false);
-  assert.ok(handleDev(lobby, SESSION, { op: 'setLayers', bondId: 'egirShip', n: -1 }, LOCAL).error);
-  assert.ok(handleDev(lobby, SESSION, { op: 'setLayers', n: 5 }, LOCAL).error);
+  assert.ok(dev(lobby, SESSION, { op: 'setLayers', bondId: 'egirShip', n: -1 }, LOCAL).error);
+  assert.ok(dev(lobby, SESSION, { op: 'setLayers', n: 5 }, LOCAL).error);
 });
 
 test('refresh：加免费刷新次数', () => {
   const ps = fakePlayer();
-  const res = handleDev(withDev(fakeLobby({ ps })), SESSION, { op: 'refresh' }, LOCAL);
+  const res = dev(withDev(fakeLobby({ ps })), SESSION, { op: 'refresh' }, LOCAL);
   assert.equal(res.ok, true);
   assert.equal(ps.shop.freeRefreshes, 1);
 });
@@ -202,19 +213,19 @@ test('refresh：加免费刷新次数', () => {
 test('pick：把自选槽换成指定干员（走 setDiy + 刷新库存）', () => {
   const ps = fakePlayer();
   const lobby = withDev(fakeLobby({ ps }));
-  const res = handleDev(lobby, SESSION,
+  const res = dev(lobby, SESSION,
     { op: 'pick', slot: 'chess_char_6_diy1_a', charId: 'char_4217_makoto', skillIndex: 2 }, LOCAL);
   assert.equal(res.ok, true);
   const call = ps.calls.find((c) => c[0] === 'setDiy');
   assert.deepEqual(call[1].chess_char_6_diy1_a, { charId: 'char_4217_makoto', skillIndex: 2, uniEquipId: null });
   assert.ok(ps.calls.some((c) => c[0] === 'initDiyStock'), '刷新自选库存');
   assert.equal(res.diy.chess_char_6_diy1_a, 'char_4217_makoto');
-  assert.equal(handleDev(lobby, SESSION, { op: 'pick', slot: 'chess_char_6_diy1_a', charId: 'char_999_nope' }, LOCAL).error,
+  assert.equal(dev(lobby, SESSION, { op: 'pick', slot: 'chess_char_6_diy1_a', charId: 'char_999_nope' }, LOCAL).error,
     'BAD_TARGET', '池外干员被拒');
 });
 
 test('opPool：返回自选池清单（面板下拉用）', () => {
-  const res = handleDev(withDev(fakeLobby()), SESSION, { op: 'opPool' }, LOCAL);
+  const res = dev(withDev(fakeLobby()), SESSION, { op: 'opPool' }, LOCAL);
   assert.equal(res.ok, true);
   assert.equal(res.count, 2);
   assert.equal(res.ops[0].charId, 'char_4217_makoto');
@@ -223,8 +234,29 @@ test('opPool：返回自选池清单（面板下拉用）', () => {
 });
 
 test('ops：返回自选槽清单 + 房间信息与放宽开关状态', () => {
-  const res = handleDev(withDev(fakeLobby()), SESSION, { op: 'ops' }, LOCAL);
+  const res = dev(withDev(fakeLobby()), SESSION, { op: 'ops' }, LOCAL);
   assert.equal(res.ok, true);
   assert.equal(res.ops.room, 'solo');
   assert.ok(res.ops.slots.some((s) => s.slot === 'chess_char_6_diy1_a' && s.tier === 6));
+});
+
+// ── 形状契约（防回归）────────────────────────────────────────────────────────
+
+test('形状契约：每个成功返回都必须带 reply，否则 server/net.js 会把数据全部丢弃', () => {
+  // server/net.js: `res?.reply ? { ...res.reply, rid } : { t: 'ok', rid }`
+  // —— 少一层 reply，客户端就只收到空 ok，所有字段变 undefined。
+  const ps = fakePlayer({ bondIds: ['egirShip'] });
+  const lobby = withDev(fakeLobby({ ps }));
+  const msgs = [
+    { op: 'devStatus' }, { op: 'devToggle', on: true }, { op: 'state' }, { op: 'ops' },
+    { op: 'funds', n: 1 }, { op: 'level', n: 1 }, { op: 'refresh' },
+    { op: 'layers', bondId: 'egirShip', n: 1 }, { op: 'layersAll', n: 1 },
+    { op: 'setLayers', bondId: 'egirShip', n: 2 }, { op: 'opPool' },
+    { op: 'pick', slot: 'chess_char_6_diy1_a', charId: 'char_4217_makoto' },
+  ];
+  for (const msg of msgs) {
+    const r = handleDev(lobby, SESSION, msg, LOCAL);
+    assert.equal(r.ok, true, `${msg.op} 应成功`);
+    assert.ok(r.reply && typeof r.reply === 'object', `${msg.op} 必须带 reply（否则数据被丢弃）`);
+  }
 });

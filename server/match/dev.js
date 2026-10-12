@@ -66,6 +66,7 @@ export function handleDev(lobby, session, msg, ctx = {}) {
   // 开关状态（不需要开关已开，也不要求对局已开始）
   const status = () => ({
     ok: true,
+    reply: {
     enabled: devOn(room),
     room: room.mode ?? null,
     localOnly: LOCAL_ONLY,
@@ -73,6 +74,7 @@ export function handleDev(lobby, session, msg, ctx = {}) {
     fromLocal: !!ctx.isLocal,
     ip: ctx.ip ?? null,
     started: !!match,
+    },
   });
 
   if (op === 'devStatus') return status();
@@ -81,7 +83,7 @@ export function handleDev(lobby, session, msg, ctx = {}) {
     if (LOCAL_ONLY && !ctx.isLocal) return fail(ERR.BAD_TARGET, 'dev: local/LAN only (DSH_DEV_LOCAL_ONLY=1)');
     const want = typeof msg.on === 'boolean' ? msg.on : !devOn(room);
     room.devEnabled = want;
-    return { ...status(), enabled: want, toggled: true };
+    return { ok: true, reply: { ...status().reply, enabled: want, toggled: true } };
   }
 
   // 以下是会改状态的操作：来源/房间/开关/身份 四道检查
@@ -99,15 +101,15 @@ export function handleDev(lobby, session, msg, ctx = {}) {
   // 记一下调用者 ip（便于事后追查；不阻断）
   if (ctx.ip) (match.devLog ??= []).push({ t: op, ip: ctx.ip, at: match.time ?? null });
 
-  if (op === 'state') return { ok: true, ...snapshot(ps) };
-  if (op === 'ops') return { ok: true, ops: listOps(match, room) };
+  if (op === 'state') return { ok: true, reply: snapshot(ps) };
+  if (op === 'ops') return { ok: true, reply: { ops: listOps(match, room) } };
 
   switch (op) {
     case 'funds': {
       const n = reqInt(msg, 'n');
       if (n === null) return fail(ERR.BAD_MSG, 'dev: funds needs an integer n');
       const added = ps.addFunds(n, { reason: 'dev' });
-      return { ok: true, added, funds: ps.funds };
+      return { ok: true, reply: { added, funds: ps.funds } };
     }
     case 'level': {
       const n = reqInt(msg, 'n');
@@ -119,15 +121,18 @@ export function handleDev(lobby, session, msg, ctx = {}) {
         if (last !== OK && last?.ok !== true) break;
       }
       return {
-        ok: true, from, level: ps.shop.level, funds: ps.funds,
-        upgradePrice: ps.shop.upgradePrice,
-        stopped: ps.shop.level < from + n ? (last?.error ?? null) : null,
+        ok: true,
+        reply: {
+          from, level: ps.shop.level, funds: ps.funds,
+          upgradePrice: ps.shop.upgradePrice,
+          stopped: ps.shop.level < from + n ? (last?.error ?? null) : null,
+        },
       };
     }
     case 'refresh': {
       ps.shop.freeRefreshes += 1;
       ps.dirty?.();
-      return { ok: true, freeRefreshes: ps.shop.freeRefreshes };
+      return { ok: true, reply: { freeRefreshes: ps.shop.freeRefreshes } };
     }
     case 'layers': {
       const n = reqInt(msg, 'n');
@@ -135,14 +140,14 @@ export function handleDev(lobby, session, msg, ctx = {}) {
       if (n === null) return fail(ERR.BAD_MSG, 'dev: layers needs an integer n');
       if (!bondId) return fail(ERR.BAD_MSG, 'dev: layers needs bondId');
       ps.addLayers(bondId, n, { requireActive: false, reason: 'dev' });
-      return { ok: true, bondId, layers: ps.layers?.[bondId] ?? null };
+      return { ok: true, reply: { bondId, layers: ps.layers?.[bondId] ?? null } };
     }
     case 'layersAll': {
       const n = reqInt(msg, 'n');
       if (n === null) return fail(ERR.BAD_MSG, 'dev: layersAll needs an integer n');
       const ids = Object.keys(ps.bonds ?? {});
       for (const id of ids) ps.addLayers(id, n, { requireActive: false, reason: 'dev' });
-      return { ok: true, count: ids.length };
+      return { ok: true, reply: { count: ids.length } };
     }
     case 'setLayers': {
       // 直接设成指定层数（可增可减）；层数上限由 layerGainRoom 决定（超出时报 unchanged 而不是假装成功）
@@ -161,7 +166,7 @@ export function handleDev(lobby, session, msg, ctx = {}) {
         ps.recompute?.();
         after = ps.layers?.[bondId] ?? n;
       }
-      return { ok: true, bondId, from: before, to: after, capped: after !== n };
+      return { ok: true, reply: { bondId, from: before, to: after, capped: after !== n } };
     }
     case 'pick': {
       // 自选干员：把某个自选槽换成指定 charId（走游戏自己的 setDiy → 校验 + 重建记录）
@@ -178,7 +183,7 @@ export function handleDev(lobby, session, msg, ctx = {}) {
       // 刷新自选库存，商店才会按新配置出牌
       try { ps.initDiyStock?.(new Set(match.bannedBondIds ?? [])); } catch { /* 兼容旧签名 */ }
       ps.dirty?.();
-      return { ok: true, slot, charId, diy: snapshot(ps).diy };
+      return { ok: true, reply: { slot, charId, diy: snapshot(ps).diy } };
     }
     case 'opPool': {
       const data = match.gd?.raw ?? null;
@@ -187,7 +192,7 @@ export function handleDev(lobby, session, msg, ctx = {}) {
         const o = data?.diy?.operators?.[id] ?? {};
         return { charId: id, name: o.name ?? id, profession: o.profession ?? null, bonds: o.bonds ?? [] };
       });
-      return { ok: true, count: ops.length, ops };
+      return { ok: true, reply: { count: ops.length, ops } };
     }
     default:
       return fail(ERR.BAD_MSG, `dev: unknown op ${op.slice(0, 32)}`);
