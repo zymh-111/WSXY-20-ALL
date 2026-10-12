@@ -29,6 +29,9 @@ import { store, useStore, shallowEqual, emptyMatch, isSpectating } from '../stor
 import { difficultyInfo } from './lobby.js';
 import { t, tc } from '../../../shared/i18n.js';
 
+/** 把异常压成一行可读文案。 */
+const errText = (e) => String(e && e.message ? e.message : e);
+
 /**
  * [CUSTOM DEV_BACKDOOR] 单人房里的「测试模式」开关。
  * 打开后弹出测试后门面板（__dev），进对局后依然有效 —— 开关状态存在服务端的房间上。
@@ -36,33 +39,50 @@ import { t, tc } from '../../../shared/i18n.js';
  * 不想改代码就关掉：这里只是 UI，真正的授权在 server/match/dev.js。
  */
 function TestModeSwitch({ coop }) {
-  const [on, setOn] = useState(null);        // null = 状态还没读回来
-  const [busy, setBusy] = useState(false);
+  const [on, setOn] = useState(false);      // 不用 null 卡住按钮：读不到状态也允许点
+  const [phase, setPhase] = useState('');   // '' | '读状态中' | '切换中'
   const [err, setErr] = useState('');
   useEffect(() => {
     if (coop) return undefined;
     let alive = true;
+    setPhase('读状态中');
     net.request('dev', { op: 'devStatus' })
-      .then((r) => { if (alive) setOn(!!r.enabled); })
-      .catch((e) => { if (alive) { setOn(false); setErr(String(e && e.message ? e.message : e)); } });
+      .then((r) => { if (alive) { setOn(!!r.enabled); setPhase(''); } })
+      .catch((e) => { if (alive) { setPhase(''); setErr('读状态失败：' + errText(e)); } });
     return () => { alive = false; };
   }, [coop]);
-  if (coop) return null;                     // 只给单人房
-  const toggle = async () => {
-    setBusy(true); setErr('');
-    try {
-      const r = await net.request('dev', { op: 'devToggle', on: !on });
-      setOn(!!r.enabled);
-      if (r.enabled) globalThis.__dev && globalThis.__dev.ensure && globalThis.__dev.ensure();
-      else globalThis.__dev && globalThis.__dev.hide && globalThis.__dev.hide();
-    } catch (e) {
-      setErr(String(e && e.message ? e.message : e));
-    } finally { setBusy(false); }
+  if (coop) return null;                    // 只给单人房
+  const toggle = () => {
+    const want = !on;
+    // 先在本地生效（面板立刻开/关），再问服务端；失败就回滚并把原因显示出来。
+    // 这样即使服务端拒绝，你也能立刻看到"点到了"，而不是毫无反应。
+    setOn(want);
+    setErr('');
+    setPhase('切换中');
+    if (want) { if (globalThis.__dev && globalThis.__dev.ensure) globalThis.__dev.ensure(); }
+    else { if (globalThis.__dev && globalThis.__dev.hide) globalThis.__dev.hide(); }
+    console.log('[dev] devToggle →', want);
+    net.request('dev', { op: 'devToggle', on: want })
+      .then((r) => {
+        setPhase('');
+        setOn(!!r.enabled);
+        console.log('[dev] devToggle reply', r);
+      })
+      .catch((e) => {
+        setPhase('');
+        setOn(!want);                       // 回滚
+        if (want) { if (globalThis.__dev && globalThis.__dev.hide) globalThis.__dev.hide(); }
+        else { if (globalThis.__dev && globalThis.__dev.ensure) globalThis.__dev.ensure(); }
+        setErr('切换失败：' + errText(e));
+        console.warn('[dev] devToggle failed', e);
+      });
   };
+  const label = phase ? '测试模式：' + phase : (on ? '测试模式：已开启' : '测试模式：关闭');
   return html`<div class="room-dev">
-    <button type="button" class=${'room-dev__sw' + (on ? ' is-on' : '')} disabled=${busy || on === null} onClick=${toggle}>
+    <button type="button" class=${'room-dev__sw' + (on ? ' is-on' : '')} onClick=${toggle}
+      title=${err || '点击进入/退出测试模式（仅单人房）'}>
       <span class="room-dev__dot"></span>
-      <span>${on ? '测试模式：已开启' : '测试模式：关闭'}</span>
+      <span>${label}</span>
     </button>
     ${err ? html`<span class="room-dev__err">${err}</span>` : null}
   </div>`;

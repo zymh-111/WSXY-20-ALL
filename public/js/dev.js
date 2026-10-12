@@ -217,6 +217,20 @@ api.ensure = () => { if (!panel) api.show(); return api; };
 
 if (typeof window !== 'undefined') window.__dev = api;
 
+// [CUSTOM] 键盘快捷键：Ctrl+Shift+D 开/关测试面板（不依赖房间界面那个按钮，
+// 万一按钮被别的元素挡住也能用）。每次按都打一行日志，便于确认按键有没有生效。
+if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+  window.addEventListener('keydown', (e) => {
+    if (!e.ctrlKey || !e.shiftKey) return;
+    if (String(e.key).toLowerCase() !== 'd') return;
+    e.preventDefault();
+    if (panel) { api.hide(); console.log('[dev] hotkey → 面板已收起'); }
+    else { api.ensure(); console.log('[dev] hotkey → 面板已打开'); }
+  });
+  console.log('[dev] 已加载：Ctrl+Shift+D 开/关测试面板；控制台可用 __dev.ensure() / await __dev.funds(500)');
+}
+window.__dev = api;   // 标记：dshDevHotkey
+
 // [CUSTOM] 不再自动弹出：改由房间界面（单人房「测试模式」开关）调用 __dev.ensure()。
 // 控制台仍然可以手动用 __dev.ensure() / __dev.show()。
 

@@ -305,7 +305,8 @@
    右侧栏改成两行：上面是原有按钮（.room-bar__main），下面是这个开关。 */
 .room-bar__right { flex-direction: column; align-items: flex-end; gap: .06rem; }
 .room-bar__main { display: flex; align-items: center; gap: .16rem; }
-.room-dev { display: flex; align-items: center; gap: .08rem; }
+.room-dev { display: flex; align-items: center; gap: .08rem; position: relative; z-index: 20; pointer-events: auto; }
+.room-bar { overflow: visible; }
 .room-dev__sw {
   display: inline-flex; align-items: center; gap: .06rem; cursor: pointer;
   font: inherit; font-size: .14rem; padding: .04rem .1rem; color: var(--lo, #7b8ea3);
