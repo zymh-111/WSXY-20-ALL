@@ -53,6 +53,20 @@ const api = {
   give: (slot = 'chess_char_6_diy1_a') => dev('give', { slot }),
   /** 一键到位：补钱 + 等级拉满 + 刷新商店（自选干员才会真的上架）。 */
   boost: () => dev('boost'),
+  /**
+   * 本地诊断：打印"客户端自己以为的"私有数据（store.match.private）里的 picks。
+   * 自选件能不能显示成真干员，取决于客户端这份 picks 能不能合成出身体
+   * （public/js/ui/gameLogic/diy.js 的 ownDiyPick + diyRecordFor）。
+   * 服务端的 state 正确但这里为空 → 渲染成「甄选干员」空模板。
+   */
+  priv: () => {
+    const st = globalThis.__SP__ && globalThis.__SP__.store;
+    const priv = st && st.match ? st.match.private : null;
+    const out = { hasStore: !!st, hasPrivate: !!priv, diy: (priv && priv.diy) || null,
+      diyBanned: (priv && priv.diyBanned) || null, ops: (priv && priv.ops) || null };
+    console.log('[dev] 客户端私有 picks =', JSON.stringify(out, null, 1));
+    return out;
+  },
   /** 重新读状态并刷新两个下拉（面板上「⟳ 刷新」用）。
    *  注意别叫 refresh —— 那个名字属于服务端的「免费刷新」op。 */
   reload: () => api._reload ? api._reload() : Promise.resolve(),

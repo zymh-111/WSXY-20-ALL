@@ -111,6 +111,26 @@ export function handleDev(lobby, session, msg, ctx = {}) {
     return { ok: true, reply: { t: 'dev', count: ops.length, ops } };
   }
 
+  // ── pick 允许在**对局开始前**用：写房间座位，开局时 setDiy(seat.diy) 会生效 ──────
+  // （否则只能"先开局再塞"，而客户端开局时那份 m.private.diy 已经定下，
+  //   渲染自选件时会合成不出干员身体 → 空模板「甄选干员」。）
+  if (op === 'pick' && !match) {
+    if (!devOn(room)) return fail(ERR.BAD_TARGET, 'dev: 后门开关未开启（先在面板点「开启后门」）');
+    const slot0 = String(msg.slot ?? '');
+    const charId0 = String(msg.charId ?? '');
+    if (!slot0) return fail(ERR.BAD_MSG, 'dev: pick needs slot');
+    if (!charId0) return fail(ERR.BAD_MSG, 'dev: pick needs charId');
+    const pool0 = diyOf(match?.gd)?.ownedPool ?? diyOf(lobby.safeData?.())?.ownedPool ?? null;
+    const picks0 = { ...(session.diy ?? {}), [slot0]: { charId: charId0, skillIndex: reqInt(msg, 'skillIndex') ?? 0, uniEquipId: msg.uniEquipId ? String(msg.uniEquipId) : null } };
+    if (pool0 && !pool0.includes(charId0)) return fail(ERR.BAD_TARGET, `dev: ${charId0} is not in the 自选 ownedPool`);
+    let r0 = null;
+    try { r0 = lobby.diy?.(session, { picks: picks0 }) ?? 'no-handler'; } catch (e) { r0 = 'throw:' + String(e && e.message); }
+    if (r0 && r0.error && r0.error !== ERR.ROOM_STARTED) {
+      return fail(ERR.BAD_TARGET, `dev: 座位自选被拒（${r0.error}）${r0.detail ? ' — ' + r0.detail : ''}`);
+    }
+    return { ok: true, reply: { t: 'dev', slot: slot0, charId: charId0, pendingMatch: true, seat: session.diy ?? null } };
+  }
+
   // ── 以下是会改状态的操作：还要求开关已开 + 对局已开始 + 自己的座位 ──────────
   if (!devOn(room)) return fail(ERR.BAD_TARGET, 'dev: 后门开关未开启（先在面板点「开启后门」）');
   if (!match) return fail(ERR.BAD_TARGET, 'dev: the match has not started');
@@ -159,6 +179,36 @@ export function handleDev(lobby, session, msg, ctx = {}) {
         },
       };
     }
+    case 'inspect': {
+      // [诊断用] 把自选槽在服务端的真实数据形状 dump 出来
+      const slot = String(msg.slot ?? 'chess_char_6_diy1_a');
+      const shrink = (o, n = 22) => {
+        if (o == null) return o;
+        if (typeof o !== 'object') return o;
+        const out = {};
+        for (const k of Object.keys(o).slice(0, n)) {
+          const v = o[k];
+          out[k] = (v && typeof v === 'object') ? (Array.isArray(v) ? `[${v.length}]` : '{…}') : v;
+        }
+        return out;
+      };
+      const rec = ps.gd?.chess?.(slot) ?? null;
+      const shopIds = (ps.shop?.slots ?? []).map((x) => (x ? `${x.kind}:${x.id}` : 'null'));
+      return { ok: true, reply: { t: 'dev',
+        slot,
+        baseIdOf: ps.gd?.baseIdOf?.(slot) ?? null,
+        rec_isNull: !rec,
+        rec_isDiy: rec?.isDiy ?? null,
+        rec_diyFor: rec?.diyFor ?? null,
+        rec_name: rec?.name ?? null,
+        rec_keys: rec ? Object.keys(rec).slice(0, 30) : [],
+        rec_shrink: shrink(rec),
+        diyRecords_keys: ps._diyRecords ? [...ps._diyRecords.keys()] : null,
+        diyStock_keys: ps.diyStock?.entries ? [...ps.diyStock.entries.keys()] : null,
+        diy_picks: ps.diy ?? null,
+        shopIds,
+      } };
+    }
     case 'give': {
       // 直接获取：走游戏自己的 acquireChess()。
       // 关键点：acquireChess 内部会 stow(piece, { allowTemp: true }) ——
@@ -180,6 +230,7 @@ export function handleDev(lobby, session, msg, ctx = {}) {
         return fail(ERR.BAD_TARGET, 'dev: 获取失败 —— 手牌与整备区都满了，先上场几个或撤回一个再试');
       }
       ps.dirty?.();
+      try { match._sendPrivate?.(ps, true); } catch { /* 忽略 */ }
       return { ok: true, reply: { t: 'dev', slot, uid: piece.uid ?? null, ...snapshot(ps) } };
     }
 
@@ -263,7 +314,15 @@ export function handleDev(lobby, session, msg, ctx = {}) {
       // 塞入后刷新商店：否则货架上还是上一轮的牌，看不到新塞的干员
       try { ps.rollShop?.({ keepFrozen: false }); } catch { /* 忽略 */ }
       ps.dirty?.();
-      return { ok: true, reply: { t: 'dev', slot, charId, diy: snapshot(ps).diy } };
+      // ① 同时写回房间座位（lobby.diy 会校验并存到 session.diy / seat.diy）。
+      //    不写的话，下一次开局 PlayerState 构造时的 setDiy(seat.diy) 会把这个 pick 覆盖掉。
+      let seatSync = null;
+      try { seatSync = lobby.diy?.(session, { picks }) ?? 'no-handler'; } catch (e) { seatSync = 'throw:' + String(e && e.message); }
+      // ② 强制重发私有视图：客户端要靠 m.private.diy 里的 pick 才能合成出干员身体，
+      //    否则它只能画槽位占位记录（表现为空模板「甄选干员」）。
+      try { match._sendPrivate?.(ps, true); } catch { /* 忽略 */ }
+      try { match._notifyPrepScouts?.(ps); } catch { /* 忽略 */ }
+      return { ok: true, reply: { t: 'dev', slot, charId, diy: snapshot(ps).diy, seatSync } };
     }
     default:
       return fail(ERR.BAD_MSG, `dev: unknown op ${op.slice(0, 32)}`);

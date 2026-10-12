@@ -74,8 +74,15 @@ function fakePlayer({ funds = 10, shopLevel = 1, maxShopLevel = 6, upgradePrice 
 /** 假的房间 / 大厅：lobby._room 就是那个房间，开关状态写在它上面。 */
 function fakeLobby({ mode = 'solo', started = true, ps = fakePlayer(), playerId = 'p1', dev = false } = {}) {
   const match = started ? { players: new Map(ps ? [[playerId, ps]] : []), gd: ps?.gd ?? null } : null;
-  const room = { mode, match, devEnabled: dev };
-  return { roomOf: () => room, _room: room, _ps: ps };
+  const seat = { playerId, diy: {} };
+  const room = { mode, match, devEnabled: dev, seatOf: (id) => (id === playerId ? seat : null), _seat: seat };
+  const session = { playerId };
+  return {
+    roomOf: () => room, _room: room, _ps: ps, _seat: seat,
+    // 模拟大厅的 room.diy：校验后存到 session 与座位
+    diy: (s, { picks }) => { s.diy = picks; seat.diy = picks; return { ok: true }; },
+    _session: session,
+  };
 }
 /** 打开房间开关（等价于在面板里点「开启后门」）。 */
 const withDev = (lobby) => { lobby._room.devEnabled = true; return lobby; };
@@ -317,4 +324,17 @@ test('give：直接获取（走游戏自己的 acquireChess，手牌满了自动
   for (let i = 0; i < 5; i++) dev(lobby, SESSION, { op: 'give', slot: 'chess_char_6_diy1_a' }, LOCAL);
   assert.equal(ps.hand.filter(Boolean).length, 5, '手牌满 5');
   assert.ok(ps.temp.filter(Boolean).length >= 2, `溢出的进了整备区（${ps.temp.filter(Boolean).length} 个）`);
+});
+
+test('pick 在【对局开始前】也能用：写房间座位（开局时 setDiy(seat.diy) 会生效）', () => {
+  // 这条顺序很关键：客户端渲染自选件靠它自己那份 m.private.diy 合成干员身体，
+  // 而那份 picks 来自开局时的 seat.diy。若只在局中改 ps.diy，
+  // 客户端学不到 pick → 合成不出人 → 界面显示"甄选干员"空模板。
+  const ps = fakePlayer();
+  const lobby = withDev(fakeLobby({ started: false, ps }));
+  const res = dev(lobby, SESSION, { op: 'pick', slot: 'chess_char_6_diy1_a', charId: 'char_4217_makoto', skillIndex: 2 }, LOCAL);
+  assert.equal(res.ok, true, '对局未开始也接受');
+  assert.equal(res.pendingMatch, true, '标记为"开局时生效"');
+  assert.deepEqual(lobby._seat.diy.chess_char_6_diy1_a,
+    { charId: 'char_4217_makoto', skillIndex: 2, uniEquipId: null }, '写进了房间座位');
 });
