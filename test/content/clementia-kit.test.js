@@ -121,7 +121,10 @@ test('S3 与海为敌: 10 bullets, normal attacks are free, an 侵蚀爆发 lock
   assert.ok(u.mem.clemntBombs, 'S3 allocates its lock state on start');
   h.b.forceAttack(u, [foe], {});
   assert.equal(u.skill.ammoLeft, 10, 'a normal attack spends no bullet');
-  h.b.emit('elementBurst', { source: u, target: foe, element: 'erosion' });
+  // 官方触发条件是「全场有**敌人**侵蚀损伤爆发」——source 是造成爆发的一方（这里是敌人自己）。
+  // 若写成 source: u（她自己），就踩到自触发那条：齐射的元素伤害会填满元素条再触发一次爆发，
+  // kit 已按官方语义过滤掉这种自触发（见 chess_char_6_21-clemnt.js 的 elementBurst 处理）。
+  h.b.emit('elementBurst', { source: foe, target: foe, element: 'erosion' });
   assert.equal(u.mem.clemntBombs.marks.size, 1, 'the 侵蚀爆发 marks the target for a barrage');
   h.step(1);
   assert.equal(u.skill.ammoLeft, 9, 'one barrage spends one bullet');
