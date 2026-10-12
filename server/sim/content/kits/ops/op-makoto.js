@@ -42,6 +42,13 @@ const DOLL_SWITCH = 1;
  * 因此引擎那套"切换期间的保护"（trait:dollSwitching：不死/无敌/阻回/禁疗/孤立/强制缴械/眩晕免疫）
  * 不会自动生效。这里补一份等价的保护窗口 —— 业主明确要求"塔纳托斯切换成俄耳甫斯的时候也该有无敌"。
  */
+/** [TEMP-LOG] 形态切换的可观测日志（排查用，撤掉时搜 TEMP-LOG）。 */
+const logSwitch = (battle, unit, from, to, extra = '') => {
+  const inv = unit.s?.flags?.invulnerable ? 'invuln' : '-';
+  console.log(`[makoto] 形态 ${from} → ${to} | t=${battle.time.toFixed(2)} `
+    + `hp=${Math.round(unit.hp)}/${Math.round(unit.s?.maxHp ?? 0)} ${inv}${extra ? ' | ' + extra : ''}`);
+};
+
 const grantFormSwitchGuard = (battle, unit) => {
   battle.addBuff(unit, {
     key: 'makoto:formSwitch', duration: DOLL_SWITCH, visible: true, refresh: 'replace',
@@ -269,6 +276,7 @@ function makoto(bb, raw, def) {
     const phase = unit.mem.makotoPhase ?? 0;
     // 形态3 → 形态2：俄耳甫斯在场时再开一次技能，切回塔纳托斯
     if (unit.trait?.doll && phase === 3) {
+      logSwitch(battle, unit, '俄耳甫斯(phase 3)', '塔纳托斯(phase 2)', '切回');
       unit.mem.makotoPhase = 2;
       unit.mem.makotoDoll = 'thanatos';
       unit.skill?.setTrigger?.('SKILL_RANGE');   // 形态2 恢复自动开启
@@ -278,6 +286,7 @@ function makoto(bb, raw, def) {
     // 形态2 → 形态3：塔纳托斯在场时开技能，切到俄耳甫斯（S3 专属）
     if (unit.trait?.doll && phase === 2) {
       if (cur !== S3) return;                    // S1/S2 没有第三形态
+      logSwitch(battle, unit, '塔纳托斯(phase 2)', '俄耳甫斯(phase 3)', '开技能切换 + 补保护窗口');
       unit.mem.makotoPhase = 3;
       unit.mem.makotoDoll = 'orpheus';
       unit.skill?.setTrigger?.('NEVER');         // 形态3 不自动开技能
@@ -294,7 +303,9 @@ function makoto(bb, raw, def) {
     }
     if (unit.trait?.doll) return;
     // 形态1 → 形态2（或 S1 直达俄耳甫斯）：开技能切入替身
-    unit.mem.makotoPhase = cur === S1 ? 3 : 2;
+    const toPhase = cur === S1 ? 3 : 2;
+    logSwitch(battle, unit, `本体(phase ${phase})`, `${toPhase === 3 ? '俄耳甫斯' : '塔纳托斯'}(phase ${toPhase})`, '开技能');
+    unit.mem.makotoPhase = toPhase;
     unit.mem.makotoDoll = cur === S1 ? 'orpheus' : 'thanatos';
     battle.emit('dollSwitch', { unit, reason: 'skill', done: false });
   };
@@ -334,6 +345,8 @@ function makoto(bb, raw, def) {
         if (ctx.unit !== unit || ctx.prevented) return;
         if (!unit.trait?.doll || (unit.mem.makotoPhase ?? 0) !== 2) return;   // 只处理"替身·塔纳托斯"阶段
         if (curId() !== S3) return;                                          // 只有 S3 有第二形态
+        console.log(`[makoto] 致命伤接管（引擎本会击倒替身）| t=${battle.time.toFixed(2)} hp=${Math.round(unit.hp)}`
+          + ` phase=${unit.mem.makotoPhase} → 改为召唤俄耳甫斯`);
         ctx.prevented = true;
         switchToDoll(battle, unit);        // phase 2 → 3（内部会设 trigger、加阻挡 buff、补切换保护、发 fx）
         unit.hp = unit.s.maxHp;            // 与特性切进替身一致：「切换途中重设自身生命至最大值」
