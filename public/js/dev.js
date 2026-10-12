@@ -16,7 +16,7 @@
 import { net } from './net.js';
 
 /** 后门支持的操作（与服务端 handleDev 一一对应）。 */
-const OPS = Object.freeze(['state', 'funds', 'level', 'refresh', 'layers', 'layersAll']);
+const OPS = Object.freeze(['state', 'funds', 'level', 'refresh', 'layers', 'layersAll', 'setLayers', 'pick', 'opPool', 'ops']);
 
 /** 发一条后门指令；失败把服务端的 error/detail 原样抛出来。 */
 async function dev(op, fields = {}) {
