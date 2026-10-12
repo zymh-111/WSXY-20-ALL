@@ -86,23 +86,32 @@ export function handleDev(lobby, session, msg, ctx = {}) {
     return { ok: true, reply: { ...status().reply, enabled: want, toggled: true } };
   }
 
-  // 以下是会改状态的操作：来源/房间/开关/身份 四道检查
+  // ── 共同检查：来源限制（若开启）+ 房间必须是 solo ────────────────────────────
   if (LOCAL_ONLY && !ctx.isLocal) return fail(ERR.BAD_TARGET, 'dev: local/LAN only (DSH_DEV_LOCAL_ONLY=1)');
-  if (!devOn(room)) return fail(ERR.BAD_TARGET, 'dev: 后门开关未开启（先在面板点「开启后门」）');
-  // ── 2) 房间：**硬性只允许 solo 单人房**（这是设计要求，不提供放宽开关）──────
-  if (room.mode !== 'solo') {
-    return fail(ERR.BAD_TARGET, 'dev: solo rooms only');
+  if (room.mode !== 'solo') return fail(ERR.BAD_TARGET, 'dev: solo rooms only');
+
+  // ── 只读操作：**不要求开关已开** ─────────────────────────────────────────────
+  // 读状态/读自选池本身不改变任何东西，而且面板正是靠它们填下拉框的。
+  // （曾经把它们放在开关检查之后，导致面板在开关生效前构建 → 读到空池 → 下拉一片空白。）
+  if (op === 'state') return { ok: true, reply: { t: 'dev', ...snapshot(ps) } };
+  if (op === 'ops') return { ok: true, reply: { t: 'dev', ops: listOps(match, room) } };
+  if (op === 'opPool') {
+    const pool = diyOf(match.gd)?.ownedPool ?? [];
+    const ops = pool.map((id) => {
+      const o = diyOf(match.gd)?.operators?.[id] ?? {};
+      return { charId: id, name: o.name ?? id, profession: o.profession ?? null, bonds: o.bonds ?? [] };
+    });
+    return { ok: true, reply: { t: 'dev', count: ops.length, ops } };
   }
+
+  // ── 以下是会改状态的操作：还要求开关已开 + 对局已开始 + 自己的座位 ──────────
+  if (!devOn(room)) return fail(ERR.BAD_TARGET, 'dev: 后门开关未开启（先在面板点「开启后门」）');
   if (!match) return fail(ERR.BAD_TARGET, 'dev: the match has not started');
-  // ── 3) 身份：只允许自己的座位 ────────────────────────────────────────────────
   const ps = match.players?.get?.(session.playerId) ?? null;
   if (!ps) return fail(ERR.BAD_TARGET, 'dev: no player state');
 
   // 记一下调用者 ip（便于事后追查；不阻断）
   if (ctx.ip) (match.devLog ??= []).push({ t: op, ip: ctx.ip, at: match.time ?? null });
-
-  if (op === 'state') return { ok: true, reply: { t: 'dev', ...snapshot(ps) } };
-  if (op === 'ops') return { ok: true, reply: { t: 'dev', ops: listOps(match, room) } };
 
   switch (op) {
     case 'funds': {
@@ -184,15 +193,6 @@ export function handleDev(lobby, session, msg, ctx = {}) {
       try { ps.initDiyStock?.(new Set(match.bannedBondIds ?? [])); } catch { /* 兼容旧签名 */ }
       ps.dirty?.();
       return { ok: true, reply: { t: 'dev', slot, charId, diy: snapshot(ps).diy } };
-    }
-    case 'opPool': {
-      const data = match.gd?.raw ?? null;
-      const pool = diyOf(match.gd)?.ownedPool ?? [];
-      const ops = pool.map((id) => {
-        const o = diyOf(match.gd)?.operators?.[id] ?? {};
-        return { charId: id, name: o.name ?? id, profession: o.profession ?? null, bonds: o.bonds ?? [] };
-      });
-      return { ok: true, reply: { t: 'dev', count: ops.length, ops } };
     }
     default:
       return fail(ERR.BAD_MSG, `dev: unknown op ${op.slice(0, 32)}`);

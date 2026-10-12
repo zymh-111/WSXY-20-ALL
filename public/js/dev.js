@@ -47,6 +47,8 @@ const api = {
   opPool: () => dev('opPool'),
   /** 槽位与房间信息（含放宽开关状态）。 */
   ops: () => dev('ops'),
+  /** 重新读状态并刷新两个下拉（面板上「⟳ 刷新」用）。 */
+  refresh: () => api._reload ? api._reload() : Promise.resolve(),
   /** 后门开关状态（不需要开关已开）。 */
   devStatus: () => dev('devStatus'),
   /** 开/关本房间的后门开关。 */
@@ -179,11 +181,16 @@ function buildPanel() {
   const refreshOps = async () => {
     try {
       const { ops } = await api.opPool();
-      opSel.replaceChildren(...ops.map((o) => {
+      if (!ops.length) {
+        const ph = el('option', null, '（没读到干员，点「⟳ 刷新」）');
+        ph.value = '';
+        opSel.replaceChildren(ph);
+      }
+      opSel.replaceChildren(...(ops.length ? ops.map((o) => {
         const opt = el('option', null, o.name + '  (' + o.charId + ')');
         opt.value = o.charId;
         return opt;
-      }));
+      }) : []));
       const mk = ops.find((o) => o.charId === 'char_4217_makoto');
       if (mk) opSel.value = mk.charId;
       const { ops: info } = await api.ops();
@@ -197,8 +204,9 @@ function buildPanel() {
   };
   refreshOps();
 
+  api._reload = async () => { await refreshBonds(); await refreshOps(); return show(); };
   body.append(status);
-  body.append(row([btn('读状态', async () => { const r = await show(); await refreshBonds(); await refreshOps(); return r; }), btn('+500 资金', () => api.funds(500))]));
+  body.append(row([btn('⟳ 刷新', () => api._reload()), btn('+500 资金', () => api.funds(500))]));
   body.append(row([btn('+1 等级', () => api.level(1)), btn('+5 等级', () => api.level(5)), btn('免费刷新', () => api.refresh())]));
   body.append(row([bondSel, layerNum, btn('设层数', () => api.setLayers(bondSel.value, Number(layerNum.value) || 0))]));
   body.append(row([btn('全盟约 +3', () => api.layersAll(3))]));
