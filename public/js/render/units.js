@@ -741,7 +741,13 @@ export class UnitView {
     // (结城理's skeleton has one 替身 set per form: Doll_Skill_1_* / _2_* / _3_P1_*+P2_*).
     // ctx.doll (from the switching fx) wins over this.skillIndex — the fx can arrive before the loadout's skill
     // index is known, and guessing there flashed the wrong 替身 for one frame.
-    if (f && typeof f.roles === 'function') return { ...f, roles: f.roles(ctx && ctx.doll != null ? ctx.doll : this.skillIndex) };
+    if (f && typeof f.roles === 'function') {
+      // 形态名与技能索引**都要**给：只给形态名会丢掉技能上下文（thanatos 会误走 S2 那套剪辑）。
+      // ctx.doll（切换 fx 带的）优先，其次用记下来的 this.formDoll（模型重建也保住当前形态），都没有则为 null；
+      // 两个都为 null 时 roles 会退回按 skill 判定（引擎路径 fx 没带形态名时的兜底）。
+      const doll = ctx && ctx.doll != null ? ctx.doll : (this.formDoll ?? null);
+      return { ...f, roles: f.roles({ doll, skill: this.skillIndex ?? null }) };
+    }
     return f;
   }
 
@@ -755,11 +761,17 @@ export class UnitView {
    */
   setForm(kind, fx = null) {
     const k = typeof kind === 'string' ? kind : null;
-    if (k === this.form) return;
+    // [CUSTOM MAKOTO_FORM_CTX] 同一种 form 内部的替身切换（塔纳托斯 ⇄ 俄耳甫斯）：
+    // 两者 kind 都是 'doll'，若照旧 `k === this.form` 直接 return，这次切换会被整个吞掉 ——
+    // 表现就是「效果换成俄耳甫斯了，模型还停在塔纳托斯」。fx 带来不同的 makotoDoll 时必须继续往下走。
+    const fxDoll = fx && typeof fx === 'object' && fx.makotoDoll != null ? String(fx.makotoDoll) : null;
+    const redoll = k === this.form && k === 'doll' && fxDoll != null && fxDoll !== this.formDoll;
+    if (k === this.form && !redoll) return;
     if (k && !FORMS[this.info.spine || this.info.defId]?.[k]) return;
     const prev = this._formSpec();
     this.form = k;
     this.info.form = k;
+    this.formDoll = k === 'doll' ? (fxDoll ?? this.formDoll ?? null) : null;   // 当前是哪个替身（塔纳托斯/俄耳甫斯）
     // [CUSTOM MAKOTO_FORM_CTX] the switching fx may carry the form context (makotoDoll = which 替身) — see _formSpec.
     const f = this._formSpec(fx && typeof fx === 'object' ? { doll: fx.makotoDoll ?? null } : null);
     if (!this.actor) return;

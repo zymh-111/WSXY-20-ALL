@@ -103,6 +103,35 @@ test('替身剪辑按**形态**选（不靠 skillIndex 猜）—— 修掉"先�
   assert.equal(r(2).idle, 'Doll_Skill_3_P1_Idle', '直接传数字也认（兼容旧调用）');
 });
 
+test('同一个 form 内的替身切换也换模型（塔纳托斯 → 俄耳甫斯）—— setForm 的同形态重解析', async () => {
+  // 塔纳托斯与俄耳甫斯的 form kind 都是 'doll'，早先 setForm 第一句 `k === this.form` 会直接 return，
+  // 于是"效果已经换成俄耳甫斯、模型还停在塔纳托斯"。现在 fx 带来不同的 makotoDoll 时必须重解析剪辑。
+  const v = await op({ skillIndex: 2 });
+  v.setForm('doll', { dur: 21, makotoDoll: 'thanatos' });
+  v.update(1 / 60, cam(), 1 / 60);
+  assert.equal(v._formSpec().roles.idle, 'Doll_Skill_3_P1_Idle', '先是塔纳托斯');
+
+  // kit 随 2→3 切换补发的 substitute fx（form 仍是 'doll'，只是换了替身名）
+  v.setForm('doll', { dur: 0, makotoDoll: 'orpheus' });
+  assert.equal(v._formSpec().roles.idle, 'Doll_Skill_3_P2_Loop', '换成俄耳甫斯（不再被早退吞掉）');
+  v.update(1 / 60, cam(), 1 / 60);
+  assert.equal(clip(v), 'Doll_Skill_3_P1_SwitchIn', '切换时仍先播 change 剪辑');
+
+  // 切回塔纳托斯
+  v.setForm('doll', { dur: 0, makotoDoll: 'thanatos' });
+  assert.equal(v._formSpec().roles.idle, 'Doll_Skill_3_P1_Idle', '切回塔纳托斯');
+
+  // 同一形态重复下发：仍是同一套剪辑（roles 每次返回新对象，所以比值不identity）
+  const beforeIdle = v._formSpec().roles.idle;
+  v.setForm('doll', { dur: 0, makotoDoll: 'thanatos' });
+  assert.equal(v._formSpec().roles.idle, beforeIdle, '重复同一形态保持同一套剪辑');
+
+  // 回本体后置空
+  v.setForm(null);
+  assert.equal(v.form, null, '回到本体');
+  assert.equal(v.formDoll, null, '替身名也清掉');
+});
+
 test('切换进替身时先播 change 剪辑', async () => {
   const v = await op({ skillIndex: 0 });
   v.setForm('doll', { dur: 20 });

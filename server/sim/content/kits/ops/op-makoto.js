@@ -288,6 +288,8 @@ function makoto(bb, raw, def) {
       unit.mem.makotoDoll = 'thanatos';
       unit.skill?.setTrigger?.('SKILL_RANGE');   // 形态2 恢复自动开启
       battle.fx('buff', { x: unit.x, y: unit.y, id: unit.id, skill: 'makotoP2toP1' });
+      // 同理：切回塔纳托斯也要让客户端换模型
+      battle.fx('substitute', { x: unit.x, y: unit.y, id: unit.id, form: 'doll', dur: 0, makotoDoll: 'thanatos' });
       return;
     }
     // 形态2 → 形态3：塔纳托斯在场时开技能，切到俄耳甫斯（S3 专属）
@@ -306,6 +308,10 @@ function makoto(bb, raw, def) {
         flags: { silence: true, disarm: true },
       });
       battle.fx('buff', { x: unit.x, y: unit.y, id: unit.id, skill: 'makotoP2' });
+      // 模型切换：客户端只认带 `form` 的 fx（shared/protocol.js fxForm → UnitView.setForm），
+      // 而引擎那张 substitute 只在 enter() 时发过一次，所以这次替身→替身要自己补一张，
+      // 否则会出现「效果已经是俄耳甫斯、模型还停在塔纳托斯」。
+      battle.fx('substitute', { x: unit.x, y: unit.y, id: unit.id, form: 'doll', dur: 0, makotoDoll: 'orpheus' });
       return;
     }
     if (unit.trait?.doll) return;
@@ -370,7 +376,17 @@ function makoto(bb, raw, def) {
         console.log(`[makoto] fatal 钩子 | 技能=${skillName()} doll=${!!unit.trait?.doll} `
           + `phase=${unit.mem.makotoPhase ?? 0} prevented=${ctx.prevented} t=${battle.time.toFixed(2)}`);
         if (ctx.prevented) return;
-        if (!unit.trait?.doll || (unit.mem.makotoPhase ?? 0) !== 2) return;   // 只处理"替身·塔纳托斯"阶段
+        if (!unit.trait?.doll) {
+          // 本体受致命伤：引擎马上会 enter() 并随 substitute fx 下发形态名。
+          // 先在**这里**把形态记好，客户端才能一次就画对替身（否则 fx 里没有 makotoDoll，客户端只能猜 skillIndex）。
+          if (!(unit.mem.makotoPhase > 0)) {
+            const cur1 = curId();
+            unit.mem.makotoPhase = cur1 === S1 ? 3 : 2;
+            unit.mem.makotoDoll = cur1 === S1 ? 'orpheus' : 'thanatos';
+          }
+          return;   // 本体 → 替身交给引擎的傀儡师分支（它才是 enter() 的人）
+        }
+        if ((unit.mem.makotoPhase ?? 0) !== 2) return;   // 只处理"替身·塔纳托斯"阶段
         if (curId() !== S3) return;                                          // 只有 S3 有第二形态
         console.log(`[makoto] 致命伤接管（引擎本会击倒替身）| t=${battle.time.toFixed(2)} hp=${Math.round(unit.hp)}`
           + ` phase=${unit.mem.makotoPhase} → 改为召唤俄耳甫斯`);
