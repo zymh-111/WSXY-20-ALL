@@ -188,10 +188,11 @@ describe('#7 the Final Assault prep deploys on the boss field', () => {
 
 /**
  * [CUSTOM] 业主自选的地形改动（2026-10-13）—— 故意的、与官方关卡数据不同的偏离：
- *   act2autochess_m01（战场#05 下半 源石流发生装置）棋盘第 9/10/11 行第 6 列，
- *   由官方 '#'（tile_forbidden，永不可部署）改为 'A'（tile_achand，高台 = 远程位）。
- * 业主原话：「我想把这张地图的红框标记处变成高台」。
- * 因此这三格在**普通场**的部署类别由「无」变成 'ranged'；官方的 boss 半场读的是第 2–5 行，不受影响。
+ *   act2autochess_m01（战场#05 下半 源石流发生装置）棋盘第 9/10/11 行第 6 列，由官方 '#'（tile_forbidden，
+ *   永不可部署）改为 'h'（tile_wall：HIGH + buildable RANGED = **本图部署区在用的高台字形**，见 (10,4)）。
+ *   对应的 boss 两个半场格子（stage 第 2–4 行第 6 / 14 列）同步改掉，所以**三种场**类别一致。
+ * 业主原话：「我想把这张地图的红框标记处变成高台」/「把 boss 战的也改了」。
+ * 因此这三格在 normal / bossL / bossR 三张部署表里都由「无」变成 'ranged'。
  * 审计对这三格放行并单独断言其类别，**其余每一格仍逐一比对官方关卡文件**。
  */
 const CUSTOM_TILES = new Map([
@@ -258,8 +259,8 @@ describe('#7 audit: every stage × deploy field (server = official level data = 
         const srv = buildDeployMap(st, { field });
         for (let r = FIELD.r0; r <= FIELD.r1; r++) for (let c = FIELD.c0; c <= FIELD.c1; c++) {
           const [sr, sc] = fieldTile(field, r, c);
-          // 业主自定义偏离只在普通场生效（boss 半场读第 2–5 行，未改动）
-          const custom = field === 'normal' ? CUSTOM_TILES.get(id)?.get(`${r},${c}`) : undefined;
+          // 业主自定义偏离：普通场与两个 boss 半场的那几格都改过，三种场一律放行
+          const custom = CUSTOM_TILES.get(id)?.get(`${r},${c}`);
           if (custom !== undefined) {
             assert.equal(srv.get(tileKey(r, c)), custom, `[CUSTOM] ${id} ${field} board ${r},${c} 业主改的高台`);
             continue;
@@ -286,10 +287,6 @@ describe('#7 audit: every stage × deploy field (server = official level data = 
         const b = buildDeployMap(st, { field });
         for (const [k, cls] of n) {
           const [r, c] = k.split(',').map(Number);
-          // [CUSTOM] carry-over 的例外：业主把 m01 普通场 (9,6)(10,6)(11,6) 改成高台 'A'，
-          // 而 boss 半场读**第 2–4 行**（官方仍是 'r' 路 → 近战位），这几格在 boss 轮放不了远程。
-          // 有意接受的代价：改 boss 侧那几格会挡住上半张图的地面路线，代价更大。
-          if (CUSTOM_TILES.get(id)?.get(k) === 'ranged') continue;
           if (cls === 'melee') assert.ok(canPlace(b, 'melee', r, c), `${id} ${field}: melee ${k}`);
           else assert.ok(canPlace(b, 'ranged', r, c), `${id} ${field}: ranged ${k}`);
         }

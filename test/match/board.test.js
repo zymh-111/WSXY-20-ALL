@@ -40,8 +40,8 @@ test('glyph rules: melee only on LOW buildable ALL/MELEE; ranged also on HIGH/RA
   assert.ok(canPlace(map, 'ranged', 10, 4) && !canPlace(map, 'melee', 10, 4));
   assert.ok(canPlace(map, 'melee', 9, 3) && canPlace(map, 'ranged', 9, 3) && canPlace(map, 'all', 9, 3));
   assert.ok(!canPlace(map, 'ranged', 10, 2), 'forbidden glyph: never placeable');
-  // [CUSTOM] (9,6)(10,6)(11,6) 业主改成了高台 'A'（见 playtest5-deploy 的 CUSTOM_TILES）：
-  // 远程可放、近战不可；原来它们和 (10,2) 一样是 '#'。
+  // [CUSTOM] (9,6)(10,6)(11,6) 业主改成了高台 'h'（tile_wall，本图部署区在用的高台字形，
+  // 见 playtest5-deploy 的 CUSTOM_TILES）——远程可放、近战不可；原来它们和 (10,2) 一样是 '#'。
   assert.equal(map.get('9,6'), 'ranged');
   assert.ok(canPlace(map, 'ranged', 9, 6) && !canPlace(map, 'melee', 9, 6), '业主改的高台：远程位');
   assert.ok(!canPlace(map, 'ranged', 10, 9));
