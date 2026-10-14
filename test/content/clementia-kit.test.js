@@ -510,3 +510,34 @@ test('S3 轰炸规则：同一地块在弹道未结束（5 s）内不会被再�
   assert.equal(ammo(), ammoBefore - 1, '两个标记只消耗 1 发弹药');
   checkInvariants(h.b);
 });
+
+test('S2 放逐舱的可见性：飞行期间周期性上报位置（clemntCabin fx），位移特效已限流', () => {
+  // 业主反馈：「只能看到最后的漩涡，看不到前面的过程，没有看到敌人被拉着走」。
+  // 原因：舱是 kit 管理的移动物，**不在快照里**，不主动上报客户端就没有东西可画 ——
+  // 之前只有发射点的 anchor（客户端画成准星）与停下后的 tide 漩涡。
+  // 现在每 CABIN_FX_EVERY(0.1) 秒发一张 clemntCabin fx（位置 + 来向 + 方向 + 施放者），
+  // 客户端新增表现型 'pod' 据此画出向前飞行的舱体（同 陈 S3 龙剑气 chen3Wave 的先例）。
+  const h = mk({ seed: 42, units: [{ chessId: CHESS_E, row: 10, col: 3, skillIndex: 1 }] });
+  const u = ready(h);
+  const foe = h.spawn('enemy_dummy', { pos: [10, 4] });
+  assert.ok(foe, '敌人就位');
+  assert.equal(u.skill.activate('test', { free: true }), true, 'S2 开启');
+  h.run(1.6);                                   // 舱飞 3 格 / 速度 2 ≈ 1.5 s
+
+  const cabin = h.eventsOf('fx').filter((e) => e[1] === 'clemntCabin');
+  assert.ok(cabin.length >= 10, `飞行期间应有多次位置上报（实得 ${cabin.length}）`);
+  const xs = cabin.map((e) => Number(e[2]));
+  assert.ok(Number.isFinite(xs[0]) && xs[xs.length - 1] > xs[0],
+    `上报位置应随舱前进（${xs[0]} → ${xs[xs.length - 1]}）`);
+  assert.ok(cabin.every((e) => Number.isFinite(e[4]?.fromX) && e[4]?.dc === 1 && e[4]?.id === u.id),
+    '每张都应带上来向/方向/施放者（客户端据此画拖尾与朝向）');
+
+  // 敌人被带着走：位置跟到舱的停止点附近
+  assert.ok(Math.abs(foe.y - 10) < 0.2 && foe.x > 5.5,
+    `敌人被拖到舱的停止点附近（${foe.x.toFixed(2)}, ${foe.y.toFixed(2)}）`);
+
+  // 位移特效限流：原来每 tick 一次（1.6 s ≈ 48 次），现在 0.1 s 一次
+  const tp = h.eventsOf('fx').filter((e) => e[1] === 'teleport');
+  assert.ok(tp.length > 0 && tp.length <= 22, `位移特效限流到 0.1 s（1.6 s 内 ${tp.length} 次）`);
+  checkInvariants(h.b);
+});

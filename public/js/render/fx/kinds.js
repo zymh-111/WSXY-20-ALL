@@ -23,6 +23,9 @@ export const FX_KINDS = Object.freeze({
   // areas
   zone: { a: 'zone', c: 0xffb35c, dur: 3 }, healField: { a: 'zone', c: 0x62f08a, dur: 4 }, firewall: { a: 'wall', c: 0xff6a2a, dur: 4 },
   firewallBlock: { a: 'counter', c: 0xff6a2a }, tide: { a: 'zone', c: 0x5fe0ff, dur: 3, r: 2 }, storm: { a: 'zone', c: 0xd8c8a0, dur: 3 },
+  // 克莱门莎 S2 的浮游放逐舱：kit 管理的移动物（不在快照里），sim 每 0.1 s 发一次位置 + 来向；
+  // 之前只有 anchor（画成准星）和停下后的 tide 漩涡，飞行过程完全看不见
+  clemntCabin: { a: 'pod', c: 0x5fe0ff, pt: true },
   tornado: { a: 'zone', c: 0xd8e8ff, dur: 3 }, snow: { a: 'zone', c: 0xe8f6ff, dur: 3 }, telegraph: { a: 'telegraph', c: 0xff3b30, dur: 1.2 },
   coldWind: { a: 'chill', c: 0x9fd4ff },
   // support

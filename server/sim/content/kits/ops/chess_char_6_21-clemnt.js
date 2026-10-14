@@ -46,6 +46,10 @@ const S1 = 'skchr_clemnt_1', S2 = 'skchr_clemnt_2', S3 = 'skchr_clemnt_3';
 const GROUND = Object.freeze({ canHitFly: false, groundOnly: true });
 const AIR = Object.freeze({ canHitFly: true });
 const SPEED = 2, DISTANCE = 3, CATCH_HALF = 0.55, VORTEX_RADIUS = 1.5;
+/** 舱的位置上报频率（秒）。同 陈 S3 龙剑气的 WAVE_FX_EVERY：kit 管理的移动物不在快照里，
+ *  不主动上报客户端就没东西可画 —— 之前只有发射点的 anchor（客户端画成准星）和停下后的漩涡，
+ *  所以「舱飞行的过程」与「敌人被拉着走」都看不见。0.1 s 一组事件足以连成连续的运动。 */
+const CABIN_FX_EVERY = 0.1;
 const SPLASH_RADIUS = 1.1; // PRTS 2026-10-10: collision test; four secondary targets take 100% ATK.
 const FIRST_BOMB = 0.5; // [ASSUMED] Neither PRTS nor the edited official demo settles the first landing offset.
 const CAST = 'clemnt:cast', CARRY = 'clemnt:carry:';
@@ -102,10 +106,13 @@ function clemnt(bb, raw, def) {
       }
     }
     const c = unit.mem.clemntCabin = { x: col, y: r, ox: col, oy: r, dr, dc, distance, moved: 0,
-      mass: num(b2['attack@max_passenger_mass'], 8), passengers: [], stopped: false, tick: 0 };
+      mass: num(b2['attack@max_passenger_mass'], 8), passengers: [], stopped: false, tick: 0,
+      fx: 0, fxX: col, fxY: r, tfx: 0 };
     // 强制缴械 while the cabin flies: PRTS "技能开启后…进入10秒的强制缴械（放逐仓停止时提前结束）".
     battle.addBuff(unit, { key: CAST, duration: 10, flags: { disarm: true }, tags: ['skill'] });
     battle.fx('anchor', { x: col + dc * distance, y: r + dr * distance, fromX: col, fromY: r, id: unit.id, dur: distance / SPEED });
+    // 舱体本体：立刻上报一次，之后每 CABIN_FX_EVERY 秒一次（见该常量）
+    battle.fx('clemntCabin', { x: c.x, y: c.y, fromX: c.ox, fromY: c.oy, dr: c.dr, dc: c.dc, id: unit.id, skill: 'clemnt:cabin', dur: distance / SPEED });
     if (distance <= 1e-9) finishCabin(battle, unit, c);
   };
   const tickCabin = (battle, unit, dt) => {
@@ -138,12 +145,24 @@ function clemnt(bb, raw, def) {
         // [ASSUMED] PRTS has not yet resolved every status in 放逐; no invulnerability or hide is invented.
         battle.addBuff(e, { key: CARRY + unit.id, flags: { noMove: true, disarm: true, unblockable: true }, source: unit, tags: ['skill'] });
       }
+      // 舱体本体：周期性上报位置（客户端据此画出向前飞行的舱；见 CABIN_FX_EVERY 的注释）
+      c.fx += dt;
+      if (c.fx >= CABIN_FX_EVERY) {
+        c.fx = 0;
+        battle.fx('clemntCabin', { x: c.x, y: c.y, fromX: c.fxX, fromY: c.fxY, dr: c.dr, dc: c.dc, id: unit.id, skill: 'clemnt:cabin' });
+        c.fxX = c.x; c.fxY = c.y;
+      }
+      // 被放逐的敌人：位置每 tick 都跟舱（这才是「带着走」本身）；位移特效限流到同一频率 ——
+      // 之前每 tick 一次（30/s）既吵又互相覆盖，反而看不出它们在被拖着走。
+      c.tfx += dt;
+      const sendTp = c.tfx >= CABIN_FX_EVERY;
+      if (sendTp) c.tfx = 0;
       for (const e of c.passengers) {
         if (!e.findBuff(CARRY + unit.id)) continue;
         const fromX = e.x, fromY = e.y;
         e.x = c.x; e.y = c.y;
         if (e.route) e.route.pts = null;
-        battle.fx('teleport', { x: e.x, y: e.y, fromX, fromY, id: e.id, src: unit.id });
+        if (sendTp) battle.fx('teleport', { x: e.x, y: e.y, fromX, fromY, id: e.id, src: unit.id });
       }
       if (c.moved >= c.distance - 1e-9) finishCabin(battle, unit, c);
       return;

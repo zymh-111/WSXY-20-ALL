@@ -195,6 +195,17 @@ export class FxSim {
         this.particle('glow', hx, hy, { tint: col, life: 0.26, s0: hs / 128 * 0.8, s1: hs / 128 * 1.5, a0: 0.55, a1: 0 });
         break;
       }
+      // 浮游放逐舱（克莱门莎 S2）：一个向前飞行的青色舱体 —— 拖尾 + 六边形本体 + 光晕。
+      // 同 qi：sim 每 0.1 s 发一次位置/来向，粒子寿命长于间隔，所以连成连续的运动。
+      case 'pod': {
+        const z = at.z + 0.5;
+        const fx0 = num(ex.fromX, NaN), fy0 = num(ex.fromY, NaN);
+        if (Number.isFinite(fx0) && Number.isFinite(fy0)) this.streak(fx0, fy0, at.x, at.y, z, col, 0.3);
+        const h = cam.project(at.x, at.y, z, this._p);
+        this.particle('hex', h.x, h.y, { tint: col, life: 0.34, s0: h.s / 128 * 1.15, s1: h.s / 128 * 0.95, a0: 0.95, a1: 0.15, spin: 0.5 });
+        this.particle('glow', h.x, h.y, { tint: col, life: 0.3, s0: h.s / 128 * 1.35, s1: h.s / 128 * 1.7, a0: 0.55, a1: 0 });
+        break;
+      }
       case 'wave': {
         const k = clamp(num(ex.scale, 1), 0.5, 4);
         const rr = Math.max(0.8, r * (ex.scale ? Math.min(2, k / 2) : 1));
