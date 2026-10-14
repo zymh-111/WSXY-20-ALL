@@ -100,3 +100,34 @@ test('面板新增：setLayers / pick / opPool / ops 的转发', async () => {
     assert.deepEqual(calls[3][1], { op: 'ops' });
   } finally { restore(); }
 });
+
+test('面板：pick/give 成功后会把同一个 pick 写进【客户端本地】的自选编队 store', async () => {
+  // 自选编队是「本地 store 为准」：ui/loadoutSync.js 在每次 welcome / 每次编辑后都会把 loadoutStore.diy
+  // 推给服务端（room.diy）。后门若只改服务端，下一次同步就把旧 pick 推回去覆盖掉 ——
+  // 表现就是「后门选了 S2，进游戏还是 S3」。所以本地那份必须一起改。
+  const mem = new Map();
+  globalThis.localStorage = {
+    getItem: (k) => (mem.has(k) ? mem.get(k) : null),
+    setItem: (k, v) => mem.set(k, String(v)),
+    removeItem: (k) => mem.delete(k),
+  };
+  const { mod, restore } = await loadPanel({
+    request: async (t, fields) => (fields.op === 'pick'
+      ? { ok: true, slot: fields.slot, charId: fields.charId,
+          diyPicks: { [fields.slot]: { charId: fields.charId, skillIndex: fields.skillIndex ?? null, uniEquipId: null, name: '克莱门莎' } } }
+      : { ok: true, kind: 'diy', given: fields.slot,
+          diyPicks: { [fields.slot]: { charId: fields.charId, skillIndex: fields.skillIndex ?? null, uniEquipId: null } } }),
+  });
+  try {
+    const r = await mod.default.pick('char_4231_clemnt', 'chess_char_6_diy1_a', 1);
+    assert.equal(r.localPick?.skillIndex, 1, `pick 后本地也该是 S2（实得 ${JSON.stringify(r.localPick)}）`);
+
+    const { loadoutStore } = await import('../../public/js/ui/loadoutSync.js');
+    assert.equal(loadoutStore.get().diy['chess_char_6_diy1_a']?.skillIndex, 1, '本地 store 的技能已同步为 S2');
+    assert.equal(loadoutStore.get().diy['chess_char_6_diy1_a']?.charId, 'char_4231_clemnt');
+
+    const g = await mod.default.give('char_4231_clemnt', 'chess_char_6_diy1_a', 2);
+    assert.equal(g.localPick?.skillIndex, 2, 'give 也会同步本地');
+    assert.equal(loadoutStore.get().diy['chess_char_6_diy1_a']?.skillIndex, 2, '本地 store 已更新为 S3');
+  } finally { restore(); delete globalThis.localStorage; }
+});

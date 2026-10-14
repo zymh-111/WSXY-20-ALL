@@ -182,6 +182,7 @@ test('state：返回资金 / 商店 / 盟约层数 / 已知盟约 / 自选已选
   assert.deepEqual(res.layers, { egirShip: 7 });
   assert.ok(Array.isArray(res.knownBonds) && res.knownBonds.includes('egirShip'), '给出已知盟约');
   assert.equal(res.diy.chess_char_6_diy1_a, 'char_4217_makoto');
+  assert.equal(res.diyPicks.chess_char_6_diy1_a?.skillIndex, 0, 'diyPicks 也带上技能（这局是 S1）');
 });
 
 test('funds：加资金（走游戏自己的 addFunds）', () => {
@@ -278,6 +279,10 @@ test('pick：把自选槽换成指定干员（走 setDiy + 刷新库存）', () 
   assert.deepEqual(call[1].chess_char_6_diy1_a, { charId: 'char_4217_makoto', skillIndex: 2, uniEquipId: null });
   assert.ok(ps.calls.some((c) => c[0] === 'initDiyStock'), '刷新自选库存');
   assert.equal(res.diy.chess_char_6_diy1_a, 'char_4217_makoto');
+  // 客户端要按"服务端最终存下来的技能"去同步本地 store（否则会被 room.diy 同步推回旧值），
+  // 所以 pick 的返回必须带 diyPicks。
+  assert.equal(res.diyPicks.chess_char_6_diy1_a?.charId, 'char_4217_makoto');
+  assert.equal(res.diyPicks.chess_char_6_diy1_a?.skillIndex, 2, '返回里带的是本次写入的 S3');
   assert.equal(dev(lobby, SESSION, { op: 'pick', slot: 'chess_char_6_diy1_a', charId: 'char_999_nope' }, LOCAL).error,
     'BAD_TARGET', '池外干员被拒');
 });

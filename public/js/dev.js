@@ -34,6 +34,32 @@ async function dev(op, fields = {}) {
   }
 }
 
+/**
+ * [CUSTOM] 后门改完**服务端**之后，客户端本地那份 picks 也必须跟着改。
+ * 自选编队是「本地 store 为准」：ui/loadoutSync.js 会在每次 welcome / 每次编辑后把 loadoutStore.diy
+ * 推给服务端（room.diy）。只改服务端的话，下一次同步就把旧 pick 推回去覆盖掉 ——
+ * 表现就是「后门明明选了 S2，进游戏还是 S3」（业主报过）。
+ * 用动态 import：模块只在真正用到时加载，测试环境里不会因为多一条顶层 import 而产生副作用。
+ */
+let _syncMod = null;
+async function syncLocalPick(slot, pick) {
+  if (!slot || !pick || !pick.charId) return null;
+  try {
+    if (!_syncMod) _syncMod = await import('./ui/loadoutSync.js');
+    const cur = _syncMod.loadoutStore.get().diy ?? {};
+    const next = {
+      ...cur,
+      [slot]: {
+        charId: pick.charId,
+        skillIndex: Number.isInteger(pick.skillIndex) ? pick.skillIndex : null,
+        uniEquipId: typeof pick.uniEquipId === 'string' ? pick.uniEquipId : null,
+      },
+    };
+    _syncMod.setDiyPicks(next);
+    return next[slot];
+  } catch { return null; }
+}
+
 const api = {
   state: () => dev('state'),
   funds: (n = 100) => dev('funds', { n }),
@@ -43,16 +69,26 @@ const api = {
   layersAll: (n = 1) => dev('layersAll', { n }),
   /** 直接设成指定层数（可增可减）。 */
   setLayers: (bondId, n) => dev('setLayers', { bondId, n }),
-  /** 自选槽换成指定干员。skillIndex 不传 = 保持该槽位原有的技能选择。 */
-  pick: (charId, slot = 'chess_char_6_diy1_a', skillIndex) =>
-    dev('pick', { slot, charId, ...(Number.isInteger(skillIndex) ? { skillIndex } : {}) }),
+  /** 自选槽换成指定干员。skillIndex 不传 = 保持该槽位原有的技能选择。
+   *  成功后会把同一个 pick 写进**客户端本地**的自选编队 store（见 syncLocalPick）。 */
+  pick: async (charId, slot = 'chess_char_6_diy1_a', skillIndex) => {
+    const r = await dev('pick', { slot, charId, ...(Number.isInteger(skillIndex) ? { skillIndex } : {}) });
+    const finalPick = (r.diyPicks ?? {})[slot] ?? { charId, skillIndex };
+    const localPick = await syncLocalPick(slot, finalPick);
+    return { ...r, localPick };
+  },
   /** 自选池清单（面板下拉用）。 */
   opPool: () => dev('opPool'),
   /** 槽位与房间信息（含放宽开关状态）。 */
   ops: () => dev('ops'),
-  /** 直接给我：把该槽位的干员直接塞进手牌（走游戏自己的 buy）。 */
-  give: (id, slot, skillIndex) =>
-    dev('give', { charId: id, slot, ...(Number.isInteger(skillIndex) ? { skillIndex } : {}) }),
+  /** 直接给我：把该槽位的干员直接塞进手牌（走游戏自己的 buy）。
+   *  自选件成功后同样把 pick 写进客户端本地 store。 */
+  give: async (id, slot, skillIndex) => {
+    const r = await dev('give', { charId: id, slot, ...(Number.isInteger(skillIndex) ? { skillIndex } : {}) });
+    const gs = r.kind === 'diy' ? r.given : null;
+    const localPick = gs ? await syncLocalPick(gs, (r.diyPicks ?? {})[gs] ?? null) : null;
+    return { ...r, localPick };
+  },
   /** 全部敌人清单（悬赏下拉用）。 */
   enemies: () => dev('enemies'),
   /** 把指定敌人作为悬赏加进【下一波】。coin = 击杀赏金。 */

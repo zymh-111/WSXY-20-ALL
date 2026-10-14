@@ -419,7 +419,8 @@ export function handleDev(lobby, session, msg, ctx = {}) {
       //    否则它只能画槽位占位记录（表现为空模板「甄选干员」）。
       try { match._sendPrivate?.(ps, true); } catch { /* 忽略 */ }
       try { match._notifyPrepScouts?.(ps); } catch { /* 忽略 */ }
-      return { ok: true, reply: { t: 'dev', slot, charId, diy: snapshot(ps).diy, seatSync } };
+      const snap = snapshot(ps);
+      return { ok: true, reply: { t: 'dev', slot, charId, diy: snap.diy, diyPicks: snap.diyPicks, seatSync } };
     }
     default:
       return fail(ERR.BAD_MSG, `dev: unknown op ${op.slice(0, 32)}`);
