@@ -87,6 +87,22 @@ const api = {
 
 let panel = null;
 
+/**
+ * 把 state.diyPicks 汇成一行：「T6 克莱门莎 S2 · T5 珊比 S3」。
+ * 只给 charId 的话，「后门选了 S2 到底生效没有」在面板上完全看不出来（业主就是因此以为后门坏了）。
+ */
+function summarizePicks(st) {
+  const picks = st && st.diyPicks;
+  const slots = picks ? Object.keys(picks) : [];
+  if (!slots.length) return '槽位：（还没有塞干员）';
+  return '槽位：' + slots.map((slot) => {
+    const p = picks[slot] ?? {};
+    const tier = (slot.match(/char_(\d+)_/) ?? [])[1] ?? '?';
+    const sk = Number.isInteger(p.skillIndex) ? ` S${Number(p.skillIndex) + 1}` : '';
+    return `T${tier} ${p.name ?? p.charId ?? '空'}${sk}`;
+  }).sort().join(' · ');
+}
+
 function el(tag, style, text) {
   const n = document.createElement(tag);
   if (style) Object.assign(n.style, style);
@@ -169,6 +185,8 @@ function buildPanel() {
   })();
 
   const status = el('div', { minHeight: '3.2em', whiteSpace: 'pre-wrap', color: '#9fb3c8' }, '（点“读状态”）');
+  /** 槽位一览（谁 + 几技能）；在 show() 里刷新。 */
+  const pickLine = el('div', { marginTop: '2px', whiteSpace: 'pre-wrap', color: '#9fe6a0' }, '槽位：—');
   const log = el('div', { marginTop: '6px', minHeight: '2.4em', whiteSpace: 'pre-wrap', color: '#ffd479' });
 
   const row = (children) => { const d = el('div', { display: 'flex', gap: '4px', marginTop: '4px' }); d.append(...children); return d; };
@@ -185,8 +203,12 @@ function buildPanel() {
     return b;
   };
   const show = async () => {
-    try { const r = await api.state(); status.textContent = JSON.stringify(r, null, 1); return r; }
-    catch (e) { status.textContent = String(e.message ?? e); return null; }
+    try {
+      const r = await api.state();
+      status.textContent = JSON.stringify(r, null, 1);
+      pickLine.textContent = summarizePicks(r);
+      return r;
+    } catch (e) { status.textContent = String(e.message ?? e); return null; }
   };
 
   // ── 盟约层数：下拉选盟约 + 输入层数 → 直接设值 ──
@@ -284,6 +306,7 @@ function buildPanel() {
     btn('加入下一波', () => api.bounty(enemySel.value, Number(cntIn.value) || 1, Number(coinIn.value) || 0)),
     btn('清空悬赏', () => api.unbounty())]));
   body.append(el('div', { marginTop: '6px', color: '#7b8ea3' }, '仅本机/内网；房间默认限 solo'));
+  body.append(pickLine);
   body.append(log);
   return root;
 }

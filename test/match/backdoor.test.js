@@ -419,3 +419,48 @@ test('enemies：返回全部敌人清单（面板下拉用）', () => {
   assert.equal(res.enemies[0].key, 'enemy_dummy');
   assert.equal(res.enemies[0].name, '假人');
 });
+
+// ── 修掉的 4 个 bug 的回归测试 ────────────────────────────────────────────────
+
+test('give 尊重显式技能：槽里已经是他时，skillIndex 仍要写进去（业主报的"选 S2 却还是 S3"）', () => {
+  // 曾经是 `if (!picked(slot))` 才写 pick —— 槽里已经是他时**整个跳过**，
+  // 于是面板里把技能从 S3 改成 S2 再点「🎁 直接给我」，技能根本没改。
+  const ps = fakePlayer();
+  assert.equal(ps.diy.chess_char_6_diy1_a.skillIndex, 0, '初值是 S1');
+  const res = dev(withDev(fakeLobby({ ps })), SESSION,
+    { op: 'give', charId: 'char_4217_makoto', slot: 'chess_char_6_diy1_a', skillIndex: 1 }, LOCAL);
+  assert.equal(res.ok, true, '获取成功');
+  assert.equal(ps.diy.chess_char_6_diy1_a.skillIndex, 1, '技能 S1 → S2 生效');
+  const setDiy = ps.calls.filter((c) => c[0] === 'setDiy').pop();
+  assert.ok(setDiy, '确实重写了 pick');
+  assert.equal(setDiy[1].chess_char_6_diy1_a.skillIndex, 1);
+  // 没给 skillIndex 时不能乱改（沿用原值）
+  const ps2 = fakePlayer();
+  dev(withDev(fakeLobby({ ps: ps2 })), SESSION, { op: 'give', charId: 'char_4217_makoto', slot: 'chess_char_6_diy1_a' }, LOCAL);
+  assert.equal(ps2.diy.chess_char_6_diy1_a.skillIndex, 0, '未显式给 → 沿用原有技能');
+});
+
+test('enemies：对局还没开始时给干净的报错，而不是 match.gd 抛 TypeError（面板自动刷新会踩到）', () => {
+  const lobby = fakeLobby({ started: false, ps: fakePlayer() });
+  const r = handleDev(lobby, SESSION, { op: 'enemies' }, LOCAL);   // 不展开 reply，看原始返回
+  assert.ok(r && !r.ok, '应是失败返回');
+  assert.equal(typeof r.error, 'string', '带 error 码');
+  assert.match(String(r.detail ?? ''), /对局|模拟/, `detail 要说清原因：${r.detail}`);
+});
+
+test('state：diyPicks 带出每个槽位的干员与技能（面板靠它显示"谁 + 几技能"）', () => {
+  const res = dev(withDev(fakeLobby({ ps: fakePlayer() })), SESSION, { op: 'state' }, LOCAL);
+  assert.equal(res.diy.chess_char_6_diy1_a, 'char_4217_makoto', 'diy 仍是 charId 映射（兼容旧读取）');
+  assert.deepEqual(res.diyPicks.chess_char_6_diy1_a,
+    { charId: 'char_4217_makoto', skillIndex: 0, uniEquipId: null, name: '结城理' }, 'diyPicks 带技能与名字');
+});
+
+test('layersAll：覆盖「激活的 ∪ 已有层数的」全部盟约（与面板下拉、knownBonds 一致）', () => {
+  const ps = fakePlayer();
+  ps.bonds = { egirShip: { active: true, layers: 0 } };
+  ps.layers = { lateranoShip: 3 };            // 有层数但当前没激活
+  const res = dev(withDev(fakeLobby({ ps })), SESSION, { op: 'layersAll', n: 3 }, LOCAL);
+  assert.equal(res.count, 2, '两个盟约都要加到');
+  assert.equal(ps.layers.egirShip, 3, '激活的加到了');
+  assert.equal(ps.layers.lateranoShip, 6, '未激活但有层数的也加到了（以前会漏）');
+});

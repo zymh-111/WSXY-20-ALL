@@ -101,17 +101,21 @@ export function handleDev(lobby, session, msg, ctx = {}) {
     if (!ps) return fail(ERR.BAD_TARGET, 'dev: no player state');
     return { ok: true, reply: { t: 'dev', ...snapshot(ps) } };
   }
-  if (op === 'ops') return { ok: true, reply: { t: 'dev', ops: listOps(match, room) } };
+  if (op === 'ops') return { ok: true, reply: { t: 'dev', ops: listOps(match, room, lobby) } };
   if (op === 'opPool') {
     // diy：自选池（char_*，只能经自选槽出场，含联动干员）
     // roster：本作阵容（chess_*，可直接获得）
-    const dd = diyOf(match.gd);
+    // ⚠️ 面板**还没开局时**也会读这两个（下拉要先填上，用户才能「塞入」再开局），
+    //    所以数据源必须是 `match?.gd ?? lobby.safeData()`。以前直接写 match.gd：
+    //    对局未开始时 match 是 null → TypeError → 面板两个下拉全空（还只能看到一条看不懂的 INTERNAL）。
+    const gd = gdOf(match, lobby);
+    const dd = diyOf(gd);
     const pool = dd?.ownedPool ?? [];
     const diy = pool.map((id) => {
       const o = dd?.operators?.[id] ?? {};
       return { id, kind: 'diy', charId: id, name: o.name ?? id, profession: o.profession ?? null, bonds: o.bonds ?? [] };
     });
-    const chessRaw = match.gd?.raw?.chess ?? {};
+    const chessRaw = gd?.raw?.chess ?? {};
     const seen = new Set();
     const roster = [];
     for (const cid of Object.keys(chessRaw)) {
@@ -135,7 +139,7 @@ export function handleDev(lobby, session, msg, ctx = {}) {
     const charId0 = String(msg.charId ?? '');
     if (!slot0) return fail(ERR.BAD_MSG, 'dev: pick needs slot');
     if (!charId0) return fail(ERR.BAD_MSG, 'dev: pick needs charId');
-    const pool0 = diyOf(match?.gd)?.ownedPool ?? diyOf(lobby.safeData?.())?.ownedPool ?? null;
+    const pool0 = diyOf(gdOf(match, lobby))?.ownedPool ?? null;
     const prev0 = (session.diy ?? {})[slot0] ?? null;
     const picks0 = { ...(session.diy ?? {}), [slot0]: { charId: charId0, skillIndex: pickSkillIndex(msg, prev0), uniEquipId: msg.uniEquipId ? String(msg.uniEquipId) : prev0?.uniEquipId ?? null } };
     if (pool0 && !pool0.includes(charId0)) return fail(ERR.BAD_TARGET, `dev: ${charId0} is not in the 自选 ownedPool`);
@@ -148,7 +152,10 @@ export function handleDev(lobby, session, msg, ctx = {}) {
   }
 
   if (op === 'enemies') {
-    // 全部敌人（面板做悬赏下拉用）
+    // 全部敌人（面板做悬赏下拉用）。⚠️ 这一支在"对局未开始"时也会被调用
+    //（面板打开后 700ms 自动 reload 一次，那时通常还在房间里），所以不能写 match.gd —— match 可能是 null，
+    // 会抛 TypeError 被包成 INTERNAL，面板上就显示一条看不懂的错误。
+    if (!match) return fail(ERR.BAD_TARGET, 'dev: 对局还没开始，读不到敌人表（先在房间点开始模拟）');
     const all = match.gd?.raw?.enemies ?? {};
     const enemies = Object.keys(all).map((key) => ({
       key, name: all[key]?.name ?? key, rank: all[key]?.rank ?? null, fly: !!all[key]?.isFlyEnemy,
@@ -261,8 +268,15 @@ export function handleDev(lobby, session, msg, ctx = {}) {
       const picked = (id) => ps.diy?.[id]?.charId === target;
       const slot = String(msg.slot && normSlots.includes(String(msg.slot)) ? msg.slot
         : normSlots.find(picked) ?? normSlots[normSlots.length - 1]);
-      // 需要时先把 pick 写好（局中写 ps.diy；局外写房间座位）
-      if (!picked(slot)) {
+      // 什么时候要重写 pick：
+      //   · 换了人（charId 不同）；或
+      //   · 显式给了 skillIndex / uniEquipId —— **即使槽里已经是他**。
+      // 曾经只判 `if (!picked(slot))`，于是"槽里已经是他"时改技能会被整个忽略：
+      // 面板选了 S2 再点「🎁 直接给我」，结果还是上一版的 S3（业主报的就是这个）。
+      const sameChar = ps.diy?.[slot]?.charId === target;
+      const wantsSkill = reqInt(msg, 'skillIndex') !== null;
+      const wantsEquip = msg.uniEquipId != null;
+      if (!sameChar || wantsSkill || wantsEquip) {
         const prevG = (ps.diy ?? session.diy ?? {})[slot] ?? null;
         const picks = { ...(ps.diy ?? session.diy ?? {}), [slot]: { charId: target, skillIndex: pickSkillIndex(msg, prevG), uniEquipId: msg.uniEquipId ? String(msg.uniEquipId) : prevG?.uniEquipId ?? null } };
         if (!match) {
@@ -354,7 +368,9 @@ export function handleDev(lobby, session, msg, ctx = {}) {
     case 'layersAll': {
       const n = reqInt(msg, 'n');
       if (n === null) return fail(ERR.BAD_MSG, 'dev: layersAll needs an integer n');
-      const ids = Object.keys(ps.bonds ?? {});
+      // 用 knownBonds（激活的 ∪ 已有层数的）——与面板下拉、snapshot 完全一致。
+      // 以前只遍历 ps.bonds，于是"有层数但当前没激活"的盟约被漏掉，面板上却列着它。
+      const ids = knownBonds(ps);
       for (const id of ids) ps.addLayers(id, n, { requireActive: false, reason: 'dev' });
       return { ok: true, reply: { t: 'dev', count: ids.length } };
     }
@@ -411,9 +427,10 @@ export function handleDev(lobby, session, msg, ctx = {}) {
 }
 
 /** 自选槽清单（客户端面板用来做下拉）。 */
-function listOps(match, room) {
-  const data = match.gd?.raw ?? null;
-  const slots = diyOf(match.gd)?.slots ?? {};
+function listOps(match, room, lobby = null) {
+  // 同上：房间里还没开局时也要能列出槽位（面板靠它做槽位下拉）
+  const gd = gdOf(match, lobby);
+  const slots = diyOf(gd)?.slots ?? {};
   return {
     slots: Object.entries(slots).map(([id, s]) => ({ slot: id, tier: s.tier, shopLevel: s.shopLevel })),
     room: room?.mode ?? null,
@@ -442,6 +459,18 @@ const pickSkillIndex = (msg, prev) => {
  */
 const diyOf = (gd) => gd?.raw?.backups?.diy ?? gd?.raw?.diy ?? null;
 
+/**
+ * 统一的数据源：对局中 = `match.gd`（GameData 包装对象，数据包在 `.raw`）；
+ * 房间里**还没开局** = `lobby.safeData()`，它**直接返回数据包**，所以要包成 `{ raw: data }` 才是同一形状。
+ * ⚠️ 以前有处写成 `diyOf(lobby.safeData())` —— 那是在数据包上找 `.raw`，永远 undefined，
+ *    于是"开局前的自选池校验"其实一直没生效。
+ */
+const gdOf = (match, lobby) => {
+  if (match?.gd) return match.gd;
+  const data = lobby?.safeData?.() ?? null;
+  return data ? { raw: data } : null;
+};
+
 /** 本局已知的盟约 id（当前激活的 + 自己已有的层数，去重排序）——面板用来做下拉。 */
 function knownBonds(ps) {
   const ids = new Set([...Object.keys(ps.bonds ?? {}), ...Object.keys(ps.layers ?? {})]);
@@ -453,7 +482,15 @@ function snapshot(ps) {
   const layers = {};
   for (const [id, n] of Object.entries(ps.layers ?? {})) if (n) layers[id] = n;
   const diy = {};
-  for (const [slot, pick] of Object.entries(ps.diy ?? {})) diy[slot] = pick?.charId ?? null;
+  const diyPicks = {};
+  const names = diyOf(ps.gd)?.operators ?? null;
+  for (const [slot, pick] of Object.entries(ps.diy ?? {})) {
+    diy[slot] = pick?.charId ?? null;
+    // 面板要能一眼看出"这个槽位现在是谁、带的几技能"——只给 charId 的话，
+    // 「后门选了 S2 到底生效没有」根本无从确认（业主就是因此怀疑后门坏了）。
+    diyPicks[slot] = { charId: pick?.charId ?? null, skillIndex: pick?.skillIndex ?? null,
+      uniEquipId: pick?.uniEquipId ?? null, name: names?.[pick?.charId]?.name ?? null };
+  }
   return {
     funds: ps.funds,
     shopLevel: ps.shop?.level ?? null,
@@ -463,6 +500,7 @@ function snapshot(ps) {
     layers,
     knownBonds: knownBonds(ps),
     diy,
+    diyPicks,
     standIns: (ps.standIns ?? []).length,
     bounties: (ps.bounties ?? []).map((b) => ({ enemyKey: b?.card?.enemyKey ?? null, count: b?.card?.count ?? 0, roundsLeft: b?.roundsLeft ?? 0 })),
     hand: (ps.hand ?? []).filter(Boolean).length,
