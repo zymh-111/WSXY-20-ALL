@@ -12,9 +12,15 @@ const ids = (s) => String(s ?? '').split(',').map((x) => x.trim()).filter(Boolea
 const num = (v, d = 0) => (Number.isFinite(+v) && v !== '' && v != null ? +v : d);
 const capOf = (gid) => (num(GR(gid).bb.max_add_count_per_battle) > 0 ? num(GR(gid).bb.max_add_count_per_battle) : Infinity);
 
-/** IN_BATTLE garrison ids carried by visible chess, and the ids those grant. */
+/** IN_BATTLE garrison ids carried by visible chess, and the ids those grant.
+ *  `NONE_DISPLAY_ONLY` 的条目只用来显示文案 —— 效果写在干员自己的 kit 里（例：克莱门莎的「阿戈尔每 3 层」，
+ *  由 test/content/clementia-kit.test.js 覆盖），所以它们不参与这里的战斗覆盖率。 */
 const VISIBLE_IDS = new Set();
-for (const c of Object.values(D.chess)) if (c.visible) for (const g of c.garrisonIds || []) if (GR(g).eventType === 'IN_BATTLE') VISIBLE_IDS.add(g);
+for (const c of Object.values(D.chess)) if (c.visible) for (const g of c.garrisonIds || []) {
+  if (GR(g).eventType !== 'IN_BATTLE') continue;
+  if (GR(g).effectType === 'NONE_DISPLAY_ONLY' || GR(g).effectKey === 'NONE_DISPLAY_ONLY') continue;
+  VISIBLE_IDS.add(g);
+}
 for (const g of [...VISIBLE_IDS]) if (GR(g).bbStr.give_garrison_id) VISIBLE_IDS.add(GR(g).bbStr.give_garrison_id);
 const idsOfKey = (key) => [...VISIBLE_IDS].filter((g) => GR(g).effectKey === key).sort();
 const COVER = new Set();
@@ -132,7 +138,8 @@ test('selfkillenemy (送葬人 / 休谟斯 / 斯卡蒂 / 海霓 / 伺夜 / 风�
   assert.deepEqual(run('garrison_131_a', 1, { egirShip: B(0), arcaneShip: B(0) }, 'ally'), { egirShip: 3, arcaneShip: 3 }, '海霓: an ally victim counts');
   assert.deepEqual(run('garrison_138_a', 1, { preciShip: B(0), lateranoShip: B(0) }, 'ally'), {}, '送葬人: allies do not count');
   assert.deepEqual(run('garrison_138_b', 3, { preciShip: B(0), lateranoShip: B(0) }), { preciShip: 6, lateranoShip: 6 }, 'first kill only');
-  assert.deepEqual(run('garrison_118_a', 60, { siracusaShip: B(0) }), { siracusaShip: 100 }, '荒芜拉普兰德: +2 per kill, cap 100');
+  // [CUSTOM] 业主决定：荒芜拉普兰德的上限已移除（tools/apply-trait-caps.mjs）—— 60 次击倒 × 2 = 120
+  assert.deepEqual(run('garrison_118_a', 60, { siracusaShip: B(0) }), { siracusaShip: 120 }, '荒芜拉普兰德: +2 per kill, 无上限');
 });
 
 test('selfdead (幽灵鲨 46 / 砾 75 / 归溟幽灵鲨 40): per knock-out; 归溟幽灵鲨 also on every substitute ⇄ body swap', () => {
@@ -197,8 +204,10 @@ test('consume_ammo (莫斯提马 22 x-5 / 圣约送葬人 23+55 / 蕾缪安 24 r
     for (const n of [7, 70]) { for (let i = 0; i < n; i++) h.b.emit('ammoUsed', { unit: u, left: 0 }); out.push({ ...gains(h) }); }
     return out;
   };
-  assert.deepEqual(exe(['garrison_23_a', 'garrison_55_a']), [{ lateranoShip: 7, visiShip: 3 }, { lateranoShip: 49, visiShip: 21 }], '圣约送葬人: 7 triggers max');
-  assert.deepEqual(exe(['garrison_23_b', 'garrison_55_b']), [{ lateranoShip: 14, visiShip: 6 }, { lateranoShip: 98, visiShip: 42 }]);
+  // [CUSTOM] 业主决定：圣约送葬人的「每场战斗至多触发 7 次 / 【远见】至多 N 层」已移除（tools/apply-trait-caps.mjs）
+  // 77 发弹药 ÷ 7 = 11 次触发 → 拉特兰 11×7=77、远见 11×3=33；精锐 154 / 66。
+  assert.deepEqual(exe(['garrison_23_a', 'garrison_55_a']), [{ lateranoShip: 7, visiShip: 3 }, { lateranoShip: 77, visiShip: 33 }], '圣约送葬人: 触发次数无上限');
+  assert.deepEqual(exe(['garrison_23_b', 'garrison_55_b']), [{ lateranoShip: 14, visiShip: 6 }, { lateranoShip: 154, visiShip: 66 }]);
   const rem = (gid, n) => {
     const h = battle({ units: [{ id: 'rem', g: [gid], row: 10, col: 3 }, ...Array.from({ length: n - 1 }, (_, i) => ({ id: `m${i}`, row: 10, col: 5 + i * 2 }))], bonds: { lateranoShip: B(0), preciShip: B(0) } });
     for (let i = 0; i < 10; i++) h.b.emit('ammoUsed', { unit: h.unit('rem') });
@@ -422,7 +431,7 @@ test('ADD_BOND 荒芜拉普兰德 118_b: every 【叙拉古】 operator (herself
   const e = h.enemies()[0];
   for (const id of ['lap', 'sira', 'other']) h.b.emit('kill', { killer: h.unit(id), victim: e });
   assert.deepEqual(gains(h), { siracusaShip: 4 });
-  assert.equal(capOf(give), 200);
+  assert.equal(capOf(give), Infinity, '[CUSTOM] 业主已移除该特质的上限');
   cover('garrison_118_b'); cover(give);
 });
 
